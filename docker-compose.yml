@@ -1,62 +1,26 @@
 services:
-
   plex-watcher:
-    build: .
-    container_name: plex-watcher
+    image: ghcr.io/sergkh/plex-watcher:sha-1e330a6
     restart: unless-stopped
     environment:
-      # Folder inside the container to watch for new video files
       WATCH_DIR: /watch
-
-      # Folder inside the container where symlinks will be created for Plex
       PLEX_DIR: /plex
-
-      # Plex server URL (use service name if Plex is in the same compose stack)
       PLEX_URL: http://plex:32400
-
-      # Your Plex auth token
       # https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/
       PLEX_TOKEN: your_plex_token_here
-
       # TMDB API key (free) — get one at https://www.themoviedb.org/settings/api
       TMDB_API_KEY: your_tmdb_api_key_here
-
       # Comma-separated library section IDs to refresh (empty = refresh all)
       # Find IDs: http://YOUR_PLEX:32400/library/sections?X-Plex-Token=YOUR_TOKEN
       PLEX_LIBRARY_IDS: ""
-
       # Quiet period (ms) after last file event before notifying Plex
       PLEX_NOTIFY_DEBOUNCE_MS: 10000
-
       # Log level: error | warn | info | debug | trace
       # Controls plex_watcher crate only; for all crates use RUST_LOG=debug
       RUST_LOG: plex_watcher=info
-
     volumes:
       # Source folder where new video files land
       - /mnt/downloads:/watch:ro
-
       # Plex media folder — must be writable so symlinks can be created
       # Must also be accessible to Plex at the same container path
       - /mnt/plex/media:/plex:rw
-
-    networks:
-      - plex_net
-
-  # ── Example Plex service (uncomment if not already running separately) ─────
-  # plex:
-  #   image: plexinc/pms-docker:latest
-  #   container_name: plex
-  #   restart: unless-stopped
-  #   environment:
-  #     PLEX_CLAIM: claim-xxxxxxxxxxxxxxxxxxxx
-  #   volumes:
-  #     - /mnt/plex/config:/config
-  #     - /mnt/downloads:/watch:ro   # same path as watcher so symlinks resolve
-  #     - /mnt/plex/media:/data:ro
-  #   networks:
-  #     - plex_net
-
-networks:
-  plex_net:
-    external: true
