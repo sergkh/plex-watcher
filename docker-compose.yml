@@ -2,6 +2,7 @@ services:
   plex-watcher:
     image: ghcr.io/sergkh/plex-watcher:sha-1e330a6
     restart: unless-stopped
+    user: "1000:1000"
     environment:
       WATCH_DIR: /watch
       PLEX_DIR: /plex
