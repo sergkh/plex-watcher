@@ -4,8 +4,8 @@ services:
     restart: unless-stopped
     user: "1000:1000"
     environment:
-      WATCH_DIR: /watch
-      PLEX_DIR: /plex
+      WATCH_DIR: /media/watch
+      PLEX_DIR: /media/plex
       PLEX_URL: http://plex:32400
       # https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/
       PLEX_TOKEN: your_plex_token_here
@@ -19,12 +19,6 @@ services:
       # Quiet period (ms) after last file event before notifying Plex
       PLEX_NOTIFY_DEBOUNCE_MS: 10000
       # Log level: error | warn | info | debug | trace
-      # Controls plex_watcher crate only; for all crates use RUST_LOG=debug
       RUST_LOG: plex_watcher=info
     volumes:
-      # Source folder where new video files land
-      - /mnt/downloads:/watch:ro
-      # Plex media folder — must be writable so hardlinks can be created
-      # Must be on the same physical filesystem as WATCH_DIR for hardlinks to work
-      # Must also be accessible to Plex at the same container path
-      - /mnt/plex/media:/plex:rw
+      - ./media:/media/:rw

@@ -107,25 +107,34 @@ fn create_link(src: &Path, link: &Path) -> Result<bool> {
 
     if link.exists() {
         if link.metadata()?.ino() == src.metadata()?.ino() {
-            debug!("Hardlink already correct: {}", link.display());
+            debug!("Link already correct: {}", link.display());
             return Ok(false);
         }
         std::fs::remove_file(link)
-            .with_context(|| format!("remove stale hardlink {}", link.display()))?;
-        info!("Removed stale hardlink: {}", link.display());
+            .with_context(|| format!("remove stale link {}", link.display()))?;
+        info!("Removed stale link: {}", link.display());
     }
 
-    std::fs::hard_link(src, link)
-        .with_context(|| format!("hardlink {} <- {}", link.display(), src.display()))?;
-    info!("Hardlink created: {} <- {}", link.display(), src.display());
-    Ok(true)
+    match std::fs::hard_link(src, link) {
+        Ok(()) => {
+            info!("Hardlink created: {} <- {}", link.display(), src.display());
+            Ok(true)
+        }
+        Err(e) if e.raw_os_error() == Some(18) => {
+            info!("Hardlink not supported (cross-device), using copy instead: {}", link.display());
+            std::fs::copy(src, link)
+                .with_context(|| format!("copy {} to {}", src.display(), link.display()))?;
+            Ok(true)
+        }
+        Err(e) => Err(e).with_context(|| format!("create link {} <- {}", link.display(), src.display())),
+    }
 }
 
 fn remove_link(link: &Path) -> Result<()> {
     match std::fs::remove_file(link) {
-        Ok(()) => { info!("Hardlink removed: {}", link.display()); Ok(()) }
+        Ok(()) => { info!("Link removed: {}", link.display()); Ok(()) }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("remove hardlink {}", link.display())),
+        Err(e) => Err(e).with_context(|| format!("remove link {}", link.display())),
     }
 }
 
@@ -133,29 +142,49 @@ fn remove_link(link: &Path) -> Result<()> {
 // Startup validation
 // ---------------------------------------------------------------------------
 
-fn validate_hardlink_permissions(plex_dir: &Path) -> Result<()> {
+fn validate_hardlink_permissions(watch_dir: &Path, plex_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(plex_dir)
         .with_context(|| format!("create plex directory {}", plex_dir.display()))?;
+
+    let test_src = watch_dir.join(".media_sync_test_src");
+    std::fs::write(&test_src, "test")
+        .context("create test source file in watch directory")?;
+
+    let mut use_copy = false;
 
     for subdir in &["Movies", "TV Shows", "Unsorted"] {
         let dir = plex_dir.join(subdir);
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("create {} directory", dir.display()))?;
 
-        let test_src = env::temp_dir().join("media_sync_hardlink_test_src");
         let test_link = dir.join(".media_sync_test");
 
-        std::fs::write(&test_src, "test")
-            .context("create test source file")?;
-
-        let result = std::fs::hard_link(&test_src, &test_link);
-        let _ = std::fs::remove_file(&test_src);
+        match std::fs::hard_link(&test_src, &test_link) {
+            Ok(()) => debug!("Hardlink test succeeded in {}", dir.display()),
+            Err(e) if e.raw_os_error() == Some(18) => {
+                info!("Hardlinks not supported across {} and {} - will use copy instead",
+                      watch_dir.display(), dir.display());
+                use_copy = true;
+                let _ = std::fs::copy(&test_src, &test_link);
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&test_src);
+                let _ = std::fs::remove_file(&test_link);
+                return Err(e).with_context(|| format!(
+                    "cannot create links in {} - check permissions",
+                    dir.display()
+                ));
+            }
+        }
         let _ = std::fs::remove_file(&test_link);
+    }
 
-        result.with_context(|| format!(
-            "cannot create hardlinks in {} - check if plex directory is on same filesystem as source",
-            dir.display()
-        ))?;
+    std::fs::remove_file(&test_src).ok();
+
+    if use_copy {
+        info!("Link method: copy (hardlinks not supported)");
+    } else {
+        info!("Link method: hardlink");
     }
 
     Ok(())
@@ -222,7 +251,7 @@ async fn main() -> Result<()> {
     info!("Debounce:  {}ms", cfg.debounce_ms);
     info!("Ignored:   {:?}", cfg.ignored_dirs);
 
-    validate_hardlink_permissions(&cfg.plex_dir).context("validate hardlink permissions")?;
+    validate_hardlink_permissions(&cfg.watch_dir, &cfg.plex_dir).context("validate hardlink permissions")?;
     info!("Hardlink permissions validated");
 
     let http = reqwest::Client::builder()
@@ -324,6 +353,8 @@ async fn main() -> Result<()> {
 }
 
 /// Walk the plex tree and remove any hardlink whose inode matches `src`.
+/// Note: When copies are used instead of hardlinks (cross-device scenario),
+/// removed source files will leave orphaned copies in the plex tree.
 fn remove_hardlinks_pointing_to(plex_dir: &Path, src: &Path) -> Result<()> {
     let src_ino = src.metadata().map(|m| m.ino()).ok();
 
