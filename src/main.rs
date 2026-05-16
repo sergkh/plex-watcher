@@ -43,7 +43,7 @@ impl AppConfig {
 
         Ok(Self {
             watch_dir: PathBuf::from(env::var("WATCH_DIR").unwrap_or_else(|_| "/watch".into())),
-            plex_movies_dir: PathBuf::from(env::var("PLEX_DIR").unwrap_or_else(|_| "/plex".into())),
+            plex_dir: PathBuf::from(env::var("PLEX_DIR").unwrap_or_else(|_| "/plex".into())),
             plex_url: env::var("PLEX_URL").unwrap_or_else(|_| "http://plex:32400".into()),
             plex_token: env::var("PLEX_TOKEN").unwrap_or_default(),
             plex_library_ids: env::var("PLEX_LIBRARY_IDS")
@@ -113,6 +113,39 @@ fn remove_symlink(link: &Path) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Startup validation
+// ---------------------------------------------------------------------------
+
+fn validate_symlink_permissions(plex_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(plex_dir)
+        .with_context(|| format!("create plex directory {}", plex_dir.display()))?;
+
+    for subdir in &["Movies", "TV Shows", "Unsorted"] {
+        let dir = plex_dir.join(subdir);
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("create {} directory", dir.display()))?;
+
+        let test_src = env::temp_dir().join("media_sync_symlink_test_src");
+        let test_link = dir.join(".media_sync_test");
+
+        std::fs::write(&test_src, "test")
+            .context("create test source file")?;
+
+        let result = unix_fs::symlink(&test_src, &test_link);
+        let _ = std::fs::remove_file(&test_src);
+        let _ = std::fs::remove_file(&test_link);
+
+        result.with_context(|| format!(
+            "cannot create symlinks in {} - check permissions or filesystem support",
+            dir.display()
+        ))?;
+    }
+
+    Ok(())
+}
+
+
+// ---------------------------------------------------------------------------
 // Core: identify file and place it in the Plex tree
 // ---------------------------------------------------------------------------
 
@@ -170,6 +203,9 @@ async fn main() -> Result<()> {
     info!("Plex dir:  {}", cfg.plex_dir.display());
     info!("Plex URL:  {}", cfg.plex_url);
     info!("Debounce:  {}ms", cfg.debounce_ms);
+
+    validate_symlink_permissions(&cfg.plex_dir).context("validate symlink permissions")?;
+    info!("Symlink permissions validated");
 
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
