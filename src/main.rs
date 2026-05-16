@@ -9,7 +9,7 @@ use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, Recur
 use std::{
     collections::HashSet,
     env,
-    os::unix::fs as unix_fs,
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -33,6 +33,7 @@ struct AppConfig {
     plex_library_ids: Vec<String>,
     tmdb_api_key: String,
     debounce_ms: u64,
+    ignored_dirs: Vec<String>,
 }
 
 impl AppConfig {
@@ -58,6 +59,13 @@ impl AppConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10_000),
+            ignored_dirs: env::var("IGNORE_DIRS")
+                .unwrap_or_else(|_| "incomplete".into())
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
         })
     }
 }
@@ -76,39 +84,48 @@ fn is_video(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn should_ignore(path: &Path, watch_dir: &Path, ignored_dirs: &[String]) -> bool {
+    if let Ok(rel_path) = path.strip_prefix(watch_dir) {
+        if let Some(first_component) = rel_path.components().next() {
+            if let Some(dir_name) = first_component.as_os_str().to_str() {
+                return ignored_dirs.iter().any(|ignored| ignored == dir_name);
+            }
+        }
+    }
+    false
+}
+
 // ---------------------------------------------------------------------------
-// Symlink helpers
+// Hardlink helpers
 // ---------------------------------------------------------------------------
 
-fn create_symlink(src: &Path, link: &Path) -> Result<bool> {
+fn create_link(src: &Path, link: &Path) -> Result<bool> {
     if let Some(parent) = link.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create_dir_all {}", parent.display()))?;
     }
 
-    if link.exists() || link.symlink_metadata().is_ok() {
-        if let Ok(existing) = std::fs::read_link(link) {
-            if existing == src {
-                debug!("Symlink already correct: {}", link.display());
-                return Ok(false);
-            }
+    if link.exists() {
+        if link.metadata()?.ino() == src.metadata()?.ino() {
+            debug!("Hardlink already correct: {}", link.display());
+            return Ok(false);
         }
         std::fs::remove_file(link)
-            .with_context(|| format!("remove stale symlink {}", link.display()))?;
-        info!("Removed stale symlink: {}", link.display());
+            .with_context(|| format!("remove stale hardlink {}", link.display()))?;
+        info!("Removed stale hardlink: {}", link.display());
     }
 
-    unix_fs::symlink(src, link)
-        .with_context(|| format!("symlink {} -> {}", link.display(), src.display()))?;
-    info!("Symlink created: {} -> {}", link.display(), src.display());
+    std::fs::hard_link(src, link)
+        .with_context(|| format!("hardlink {} <- {}", link.display(), src.display()))?;
+    info!("Hardlink created: {} <- {}", link.display(), src.display());
     Ok(true)
 }
 
-fn remove_symlink(link: &Path) -> Result<()> {
+fn remove_link(link: &Path) -> Result<()> {
     match std::fs::remove_file(link) {
-        Ok(()) => { info!("Symlink removed: {}", link.display()); Ok(()) }
+        Ok(()) => { info!("Hardlink removed: {}", link.display()); Ok(()) }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("remove symlink {}", link.display())),
+        Err(e) => Err(e).with_context(|| format!("remove hardlink {}", link.display())),
     }
 }
 
@@ -116,7 +133,7 @@ fn remove_symlink(link: &Path) -> Result<()> {
 // Startup validation
 // ---------------------------------------------------------------------------
 
-fn validate_symlink_permissions(plex_dir: &Path) -> Result<()> {
+fn validate_hardlink_permissions(plex_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(plex_dir)
         .with_context(|| format!("create plex directory {}", plex_dir.display()))?;
 
@@ -125,18 +142,18 @@ fn validate_symlink_permissions(plex_dir: &Path) -> Result<()> {
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("create {} directory", dir.display()))?;
 
-        let test_src = env::temp_dir().join("media_sync_symlink_test_src");
+        let test_src = env::temp_dir().join("media_sync_hardlink_test_src");
         let test_link = dir.join(".media_sync_test");
 
         std::fs::write(&test_src, "test")
             .context("create test source file")?;
 
-        let result = unix_fs::symlink(&test_src, &test_link);
+        let result = std::fs::hard_link(&test_src, &test_link);
         let _ = std::fs::remove_file(&test_src);
         let _ = std::fs::remove_file(&test_link);
 
         result.with_context(|| format!(
-            "cannot create symlinks in {} - check permissions or filesystem support",
+            "cannot create hardlinks in {} - check if plex directory is on same filesystem as source",
             dir.display()
         ))?;
     }
@@ -170,8 +187,8 @@ async fn process_file(src: &Path, cfg: &AppConfig, http: &reqwest::Client) -> Re
     let link_path = organizer::build_plex_path(&cfg.plex_dir, &media_info, src);
     info!("Plex path: {}", link_path.display());
 
-    // 4. Create symlink
-    create_symlink(src, &link_path)
+    // 4. Create hardlink
+    create_link(src, &link_path)
 }
 
 // ---------------------------------------------------------------------------
@@ -203,9 +220,10 @@ async fn main() -> Result<()> {
     info!("Plex dir:  {}", cfg.plex_dir.display());
     info!("Plex URL:  {}", cfg.plex_url);
     info!("Debounce:  {}ms", cfg.debounce_ms);
+    info!("Ignored:   {:?}", cfg.ignored_dirs);
 
-    validate_symlink_permissions(&cfg.plex_dir).context("validate symlink permissions")?;
-    info!("Symlink permissions validated");
+    validate_hardlink_permissions(&cfg.plex_dir).context("validate hardlink permissions")?;
+    info!("Hardlink permissions validated");
 
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -216,6 +234,8 @@ async fn main() -> Result<()> {
     let watch_dir = cfg.watch_dir.clone();
     let _watcher = {
         let tx = tx.clone();
+        let watch_dir_clone = watch_dir.clone();
+        let ignored_dirs = cfg.ignored_dirs.clone();
         let (notify_tx, notify_rx) = std::sync::mpsc::channel::<Result<Event, notify::Error>>();
         let mut watcher = RecommendedWatcher::new(notify_tx, NotifyConfig::default())?;
         watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
@@ -228,10 +248,10 @@ async fn main() -> Result<()> {
                         let paths = event.paths;
                         match event.kind {
                             EventKind::Create(_) | EventKind::Modify(_) => {
-                                for p in paths { if is_video(&p) { let _ = tx.send(FileEvent::Added(p)); } }
+                                for p in paths { if is_video(&p) && !should_ignore(&p, &watch_dir_clone, &ignored_dirs) { let _ = tx.send(FileEvent::Added(p)); } }
                             }
                             EventKind::Remove(_) => {
-                                for p in paths { if is_video(&p) { let _ = tx.send(FileEvent::Removed(p)); } }
+                                for p in paths { if is_video(&p) && !should_ignore(&p, &watch_dir_clone, &ignored_dirs) { let _ = tx.send(FileEvent::Removed(p)); } }
                             }
                             _ => {}
                         }
@@ -277,7 +297,7 @@ async fn main() -> Result<()> {
                             let fallback = cfg.plex_dir
                                 .join("Unsorted")
                                 .join(src.file_name().unwrap_or_default());
-                            match create_symlink(&src, &fallback) {
+                            match create_link(&src, &fallback) {
                                 Ok(true)  => needs_refresh = true,
                                 Ok(false) => {}
                                 Err(e2)   => error!("{e2:#}"),
@@ -287,7 +307,7 @@ async fn main() -> Result<()> {
                 }
 
                 for src in pending_removed.drain() {
-                    if let Err(e) = remove_symlinks_pointing_to(&cfg.plex_dir, &src) {
+                    if let Err(e) = remove_hardlinks_pointing_to(&cfg.plex_dir, &src) {
                         error!("Cleanup error: {e:#}");
                     } else {
                         needs_refresh = true;
@@ -303,19 +323,21 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Walk the plex tree and remove any symlink whose resolved target matches `src`.
-fn remove_symlinks_pointing_to(plex_dir: &Path, src: &Path) -> Result<()> {
-    fn walk(dir: &Path, src: &Path) -> Result<()> {
+/// Walk the plex tree and remove any hardlink whose inode matches `src`.
+fn remove_hardlinks_pointing_to(plex_dir: &Path, src: &Path) -> Result<()> {
+    let src_ino = src.metadata().map(|m| m.ino()).ok();
+
+    fn walk(dir: &Path, src_ino: Option<u64>, src: &Path) -> Result<()> {
         for entry in std::fs::read_dir(dir)?.flatten() {
             let path = entry.path();
-            if path.is_dir() { walk(&path, src)?; }
-            if path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
-                if let Ok(target) = std::fs::read_link(&path) {
-                    if target == src { remove_symlink(&path)?; }
+            if path.is_dir() { walk(&path, src_ino, src)?; }
+            if let Ok(meta) = path.metadata() {
+                if !meta.is_dir() && src_ino == Some(meta.ino()) {
+                    remove_link(&path)?;
                 }
             }
         }
         Ok(())
     }
-    walk(plex_dir, src)
+    walk(plex_dir, src_ino, src)
 }

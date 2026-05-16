@@ -14,6 +14,8 @@ services:
       # Comma-separated library section IDs to refresh (empty = refresh all)
       # Find IDs: http://YOUR_PLEX:32400/library/sections?X-Plex-Token=YOUR_TOKEN
       PLEX_LIBRARY_IDS: ""
+      # Comma-separated direct subfolders to ignore (default: incomplete)
+      IGNORE_DIRS: incomplete
       # Quiet period (ms) after last file event before notifying Plex
       PLEX_NOTIFY_DEBOUNCE_MS: 10000
       # Log level: error | warn | info | debug | trace
@@ -22,6 +24,7 @@ services:
     volumes:
       # Source folder where new video files land
       - /mnt/downloads:/watch:ro
-      # Plex media folder — must be writable so symlinks can be created
+      # Plex media folder — must be writable so hardlinks can be created
+      # Must be on the same physical filesystem as WATCH_DIR for hardlinks to work
       # Must also be accessible to Plex at the same container path
       - /mnt/plex/media:/plex:rw
