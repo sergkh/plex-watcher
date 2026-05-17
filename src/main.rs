@@ -34,6 +34,7 @@ struct AppConfig {
     tmdb_api_key: String,
     debounce_ms: u64,
     ignored_dirs: Vec<String>,
+    enable_polling: bool,
 }
 
 impl AppConfig {
@@ -66,6 +67,10 @@ impl AppConfig {
                 .filter(|s| !s.is_empty())
                 .map(String::from)
                 .collect(),
+            enable_polling: env::var("ENABLE_POLLING")
+                .ok()
+                .and_then(|v| v.to_lowercase().parse::<bool>().ok())
+                .unwrap_or(false),
         })
     }
 }
@@ -249,6 +254,7 @@ async fn main() -> Result<()> {
     info!("Plex dir:  {}", cfg.plex_dir.display());
     info!("Plex URL:  {}", cfg.plex_url);
     info!("Debounce:  {}ms", cfg.debounce_ms);
+    info!("Polling:   {}", if cfg.enable_polling { "enabled" } else { "disabled" });
     info!("Ignored:   {:?}", cfg.ignored_dirs);
 
     validate_hardlink_permissions(&cfg.watch_dir, &cfg.plex_dir).context("validate hardlink permissions")?;
@@ -277,12 +283,28 @@ async fn main() -> Result<()> {
                         let paths = event.paths;
                         match event.kind {
                             EventKind::Create(_) | EventKind::Modify(_) => {
-                                for p in paths { if is_video(&p) && !should_ignore(&p, &watch_dir_clone, &ignored_dirs) { let _ = tx.send(FileEvent::Added(p)); } }
+                                for p in paths {
+                                    debug!("Event: Create/Modify: {}", p.display());
+                                    let is_vid = is_video(&p);
+                                    let is_ign = should_ignore(&p, &watch_dir_clone, &ignored_dirs);
+                                    debug!("  is_video={} should_ignore={}", is_vid, is_ign);
+                                    if is_vid && !is_ign {
+                                        let _ = tx.send(FileEvent::Added(p));
+                                    }
+                                }
                             }
                             EventKind::Remove(_) => {
-                                for p in paths { if is_video(&p) && !should_ignore(&p, &watch_dir_clone, &ignored_dirs) { let _ = tx.send(FileEvent::Removed(p)); } }
+                                for p in paths {
+                                    debug!("Event: Remove: {}", p.display());
+                                    let is_vid = is_video(&p);
+                                    let is_ign = should_ignore(&p, &watch_dir_clone, &ignored_dirs);
+                                    debug!("  is_video={} should_ignore={}", is_vid, is_ign);
+                                    if is_vid && !is_ign {
+                                        let _ = tx.send(FileEvent::Removed(p));
+                                    }
+                                }
                             }
-                            _ => {}
+                            kind => debug!("Event (ignored): {:?}", kind),
                         }
                     }
                     Err(e) => error!("Notify error: {e}"),
@@ -292,15 +314,36 @@ async fn main() -> Result<()> {
         watcher
     };
 
+    // Scan for any existing video files that may have been added before watcher started
+    let tx_initial = tx.clone();
+    match scan_initial_files(&watch_dir, &cfg.ignored_dirs) {
+        Ok(files) => {
+            info!("Found {} existing video files", files.len());
+            for file in files {
+                let _ = tx_initial.send(FileEvent::Added(file));
+            }
+        }
+        Err(e) => warn!("Initial directory scan failed: {e:#}"),
+    }
+
     let debounce = Duration::from_millis(cfg.debounce_ms);
     let mut pending_added: HashSet<PathBuf> = HashSet::new();
     let mut pending_removed: HashSet<PathBuf> = HashSet::new();
     let mut deadline: Option<Instant> = None;
+    let mut last_scan = Instant::now();
+    let mut last_seen_files: HashSet<PathBuf> = HashSet::new();
+    let poll_interval = Duration::from_secs(5);
 
     loop {
-        let timeout = deadline
-            .map(|d| d.saturating_duration_since(Instant::now()))
-            .unwrap_or(Duration::from_secs(3600));
+        let timeout = if cfg.enable_polling {
+            deadline
+                .map(|d| d.saturating_duration_since(Instant::now()))
+                .unwrap_or(poll_interval)
+        } else {
+            deadline
+                .map(|d| d.saturating_duration_since(Instant::now()))
+                .unwrap_or(Duration::from_secs(3600))
+        };
 
         tokio::select! {
             msg = rx.recv() => {
@@ -347,6 +390,27 @@ async fn main() -> Result<()> {
                     plex::notify_plex(&cfg.plex_url, &cfg.plex_token, &cfg.plex_library_ids, &http).await;
                 }
             }
+
+            _ = sleep(poll_interval), if deadline.is_none() && cfg.enable_polling => {
+                // Periodic scan to catch files that appeared without triggering events (e.g., copies)
+                if last_scan.elapsed() >= poll_interval {
+                    last_scan = Instant::now();
+                    if let Ok(current_files) = scan_initial_files(&watch_dir, &cfg.ignored_dirs) {
+                        let current_set: HashSet<_> = current_files.into_iter().collect();
+                        let new_files: Vec<_> = current_set.difference(&last_seen_files).cloned().collect();
+
+                        if !new_files.is_empty() {
+                            debug!("Polling found {} new files", new_files.len());
+                            for file in new_files {
+                                info!("Detected via polling: {}", file.display());
+                                pending_added.insert(file);
+                            }
+                            deadline = Some(Instant::now() + debounce);
+                        }
+                        last_seen_files = current_set;
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -371,4 +435,26 @@ fn remove_hardlinks_pointing_to(plex_dir: &Path, src: &Path) -> Result<()> {
         Ok(())
     }
     walk(plex_dir, src_ino, src)
+}
+
+/// Scan for existing video files in the watch directory on startup
+fn scan_initial_files(watch_dir: &Path, ignored_dirs: &[String]) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+
+    fn walk(dir: &Path, watch_dir: &Path, ignored_dirs: &[String], files: &mut Vec<PathBuf>) -> Result<()> {
+        for entry in std::fs::read_dir(dir)?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if !should_ignore(&path, watch_dir, ignored_dirs) {
+                    walk(&path, watch_dir, ignored_dirs, files)?;
+                }
+            } else if is_video(&path) && !should_ignore(&path, watch_dir, ignored_dirs) {
+                files.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    walk(watch_dir, watch_dir, ignored_dirs, &mut files)?;
+    Ok(files)
 }
