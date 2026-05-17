@@ -31,14 +31,14 @@ impl ParsedName {
 
 // ── compiled regexes ─────────────────────────────────────────────────────────
 
-/// SnnEnn or SnnEnnEnn (multi-episode)
+/// SnnEnn or SnnEnnEnn (multi-episode), optionally at start of string
 static RE_SXX_EXX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)[. _-]S(\d{1,2})E(\d{2})(?:E(\d{2}))*").unwrap()
+    Regex::new(r"(?i)(?:^|[. _-])S(\d{1,2})E(\d{2})(?:E(\d{2}))*").unwrap()
 });
 
-/// 1x03 style
+/// 1x03 style, optionally at start of string
 static RE_1X03: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)[. _-](\d{1,2})x(\d{2})").unwrap()
+    Regex::new(r"(?i)(?:^|[. _-])(\d{1,2})x(\d{2})").unwrap()
 });
 
 /// Four-digit year, usually surrounded by dots/spaces/parens
@@ -73,10 +73,34 @@ pub fn parse(path: &Path) -> ParsedName {
                 episodes.push(n);
             }
         }
-        let title_raw = &stem[..caps.get(0).unwrap().start()];
+
+        // Extract title: either before the match (if not at start) or after (if at start)
+        let title_raw = if caps.get(0).unwrap().start() == 0 {
+            // Match at beginning: S03E08. The Boys -> extract "The Boys"
+            let after_match = &stem[caps.get(0).unwrap().end()..];
+            after_match.trim_start_matches(|c: char| c == '.' || c == ' ' || c == '_' || c == '-')
+        } else {
+            // Match in middle: The.Boys.S03E08.Title -> extract before S03E08
+            &stem[..caps.get(0).unwrap().start()]
+        };
+
+        // Remove junk from the extracted title
+        let without_junk = RE_JUNK.replace(title_raw, "");
+        let year = extract_year(stem);
+
+        // Also remove year from title if found
+        let title_without_year = if let Some(y) = year {
+            without_junk
+                .replace(&format!("({})", y), "")
+                .replace(&format!(".{}", y), "")
+                .replace(&format!(" {}", y), "")
+        } else {
+            without_junk.into_owned()
+        };
+
         return ParsedName {
-            title: clean_title(title_raw),
-            year: extract_year(stem),
+            title: clean_title(&title_without_year),
+            year,
             season: Some(season),
             episodes,
         };
@@ -86,10 +110,34 @@ pub fn parse(path: &Path) -> ParsedName {
     if let Some(caps) = RE_1X03.captures(stem) {
         let season: u16 = caps[1].parse().unwrap_or(1);
         let episode: u16 = caps[2].parse().unwrap_or(1);
-        let title_raw = &stem[..caps.get(0).unwrap().start()];
+
+        // Extract title: either before the match or after (if at start)
+        let title_raw = if caps.get(0).unwrap().start() == 0 {
+            // Match at beginning: 1x03.Show.Name -> extract "Show Name"
+            let after_match = &stem[caps.get(0).unwrap().end()..];
+            after_match.trim_start_matches(|c: char| c == '.' || c == ' ' || c == '_' || c == '-')
+        } else {
+            // Match in middle: Show.Name.1x03.Title -> extract before 1x03
+            &stem[..caps.get(0).unwrap().start()]
+        };
+
+        // Remove junk from the extracted title
+        let without_junk = RE_JUNK.replace(title_raw, "");
+        let year = extract_year(stem);
+
+        // Also remove year from title if found
+        let title_without_year = if let Some(y) = year {
+            without_junk
+                .replace(&format!("({})", y), "")
+                .replace(&format!(".{}", y), "")
+                .replace(&format!(" {}", y), "")
+        } else {
+            without_junk.into_owned()
+        };
+
         return ParsedName {
-            title: clean_title(title_raw),
-            year: extract_year(stem),
+            title: clean_title(&title_without_year),
+            year,
             season: Some(season),
             episodes: vec![episode],
         };
@@ -184,5 +232,14 @@ mod tests {
         let r = p("The.Godfather.(1972).mkv");
         assert_eq!(r.title, "The Godfather");
         assert_eq!(r.year, Some(1972));
+    }
+
+    #[test]
+    fn episode_at_start() {
+        let r = p("S03E08. The Boys (2022) BDRip-AVC [4xUKR_ENG] [Hurtom].mkv");
+        assert_eq!(r.title, "The Boys");
+        assert_eq!(r.year, Some(2022));
+        assert_eq!(r.season, Some(3));
+        assert_eq!(r.episodes, vec![8]);
     }
 }
