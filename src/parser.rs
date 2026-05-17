@@ -5,6 +5,9 @@
 //!   Show Name - 1x03 - Episode Title.mkv
 //!   Movie.Name.2023.2160p.UHD.BluRay.mkv
 //!   Movie Name (2023).mkv
+//!
+//! Also extracts show name and year from folder structure:
+//!   Show Name (2019)/Season 03/S03E08.Title.mkv
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -86,7 +89,7 @@ pub fn parse(path: &Path) -> ParsedName {
 
         // Remove junk from the extracted title
         let without_junk = RE_JUNK.replace(title_raw, "");
-        let year = extract_year(stem);
+        let mut year = extract_year(stem);
 
         // Also remove year from title if found
         let title_without_year = if let Some(y) = year {
@@ -98,8 +101,16 @@ pub fn parse(path: &Path) -> ParsedName {
             without_junk.into_owned()
         };
 
+        let mut title = clean_title(&title_without_year);
+
+        // Prefer folder structure if available (e.g., "Show Name (2019)/Season XX/...")
+        if let Some((folder_title, folder_year)) = extract_from_folder(path) {
+            title = folder_title;
+            year = folder_year.or(year);
+        }
+
         return ParsedName {
-            title: clean_title(&title_without_year),
+            title,
             year,
             season: Some(season),
             episodes,
@@ -123,7 +134,7 @@ pub fn parse(path: &Path) -> ParsedName {
 
         // Remove junk from the extracted title
         let without_junk = RE_JUNK.replace(title_raw, "");
-        let year = extract_year(stem);
+        let mut year = extract_year(stem);
 
         // Also remove year from title if found
         let title_without_year = if let Some(y) = year {
@@ -135,8 +146,16 @@ pub fn parse(path: &Path) -> ParsedName {
             without_junk.into_owned()
         };
 
+        let mut title = clean_title(&title_without_year);
+
+        // Prefer folder structure if available
+        if let Some((folder_title, folder_year)) = extract_from_folder(path) {
+            title = folder_title;
+            year = folder_year.or(year);
+        }
+
         return ParsedName {
-            title: clean_title(&title_without_year),
+            title,
             year,
             season: Some(season),
             episodes: vec![episode],
@@ -182,6 +201,35 @@ fn clean_title(raw: &str) -> String {
         .join(" ")
         .trim()
         .to_string()
+}
+
+/// Try to extract show name and year from folder structure.
+/// For folder: "Show Name (2019)/Season 03/S03E08.Title.mkv"
+/// Returns: Some(("Show Name", 2019))
+fn extract_from_folder(path: &Path) -> Option<(String, Option<u16>)> {
+    // Walk up directories looking for a pattern like "Show Name (YYYY)"
+    let mut current = path.parent()?;
+
+    for _ in 0..3 {
+        if let Some(folder_name) = current.file_name() {
+            if let Some(name_str) = folder_name.to_str() {
+                // Try to extract "Show Name (YYYY)" pattern
+                if let Some(caps) = RE_YEAR.captures(name_str) {
+                    if let Ok(year) = caps.get(1).unwrap().as_str().parse::<u16>() {
+                        // Remove the year from the folder name to get show name
+                        let show_name = name_str
+                            .replace(&format!("({})", year), "")
+                            .replace(&format!(".{}", year), "")
+                            .replace(&format!(" {}", year), "");
+                        return Some((clean_title(&show_name), Some(year)));
+                    }
+                }
+            }
+        }
+        current = current.parent()?;
+    }
+
+    None
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
