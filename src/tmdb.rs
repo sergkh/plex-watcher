@@ -22,7 +22,6 @@ pub enum MediaInfo {
         show_title: String,
         show_year: u16,
         season: u16,
-        episodes: Vec<u16>,
         tmdb_id: u64,
     },
 }
@@ -64,12 +63,11 @@ pub async fn lookup(
     api_key: &str,
     title: &str,
     year: Option<u16>,
-    season: Option<u16>,
-    episodes: &[u16],
+    season: Option<u16>
 ) -> Result<MediaInfo> {
     if season.is_some() {
         // Looks like a TV episode — search TV first
-        if let Ok(info) = search_tv(client, api_key, title, year, season.unwrap(), episodes).await {
+        if let Ok(info) = search_tv(client, api_key, title, year, season.unwrap()).await {
             return Ok(info);
         }
     }
@@ -81,7 +79,7 @@ pub async fn lookup(
 
     // Fallback: if it had season info, try TV even without a year
     if let Some(s) = season {
-        return search_tv(client, api_key, title, None, s, episodes).await;
+        return search_tv(client, api_key, title, None, s).await;
     }
 
     bail!("No TMDB match found for '{title}'");
@@ -129,8 +127,7 @@ async fn search_tv(
     api_key: &str,
     title: &str,
     year: Option<u16>,
-    season: u16,
-    episodes: &[u16],
+    season: u16
 ) -> Result<MediaInfo> {
     let mut url = format!(
         "{BASE}/search/tv?api_key={api_key}&query={}&language=en-US&page=1",
@@ -154,11 +151,11 @@ async fn search_tv(
         .unwrap_or(year.unwrap_or(0));
 
     info!("TMDB TV match: '{}' ({}) S{:02}", hit.name, air_year, season);
+
     Ok(MediaInfo::Episode {
         show_title: hit.name,
         show_year: air_year,
         season,
-        episodes: episodes.to_vec(),
         tmdb_id: hit.id,
     })
 }

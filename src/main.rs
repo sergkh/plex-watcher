@@ -1,15 +1,14 @@
+mod config;
 mod organizer;
 mod parser;
 mod plex;
+mod processor;
 mod tmdb;
 
-use dotenvy;
 use anyhow::{Context, Result};
 use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
-    collections::HashSet,
-    env,
-    os::unix::fs::MetadataExt,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -20,60 +19,8 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-struct AppConfig {
-    watch_dir: PathBuf,
-    plex_dir: PathBuf,
-    plex_url: String,
-    plex_token: String,
-    plex_library_ids: Vec<String>,
-    tmdb_api_key: String,
-    debounce_ms: u64,
-    ignored_dirs: Vec<String>,
-    enable_polling: bool,
-}
-
-impl AppConfig {
-    fn from_env() -> Result<Self> {
-        dotenvy::dotenv().ok();
-        let tmdb_api_key = env::var("TMDB_API_KEY")
-            .context("TMDB_API_KEY environment variable is required")?;
-
-        Ok(Self {
-            watch_dir: PathBuf::from(env::var("WATCH_DIR").unwrap_or_else(|_| "/watch".into())),
-            plex_dir: PathBuf::from(env::var("PLEX_DIR").unwrap_or_else(|_| "/plex".into())),
-            plex_url: env::var("PLEX_URL").unwrap_or_else(|_| "http://plex:32400".into()),
-            plex_token: env::var("PLEX_TOKEN").unwrap_or_default(),
-            plex_library_ids: env::var("PLEX_LIBRARY_IDS")
-                .unwrap_or_default()
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect(),
-            tmdb_api_key,
-            debounce_ms: env::var("PLEX_NOTIFY_DEBOUNCE_MS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(10_000),
-            ignored_dirs: env::var("IGNORE_DIRS")
-                .unwrap_or_else(|_| "incomplete".into())
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect(),
-            enable_polling: env::var("ENABLE_POLLING")
-                .ok()
-                .and_then(|v| v.to_lowercase().parse::<bool>().ok())
-                .unwrap_or(false),
-        })
-    }
-}
+use config::AppConfig;
+use processor::{create_link, process_file, process_folder, remove_hardlinks_pointing_to};
 
 // ---------------------------------------------------------------------------
 // Video extension check
@@ -100,48 +47,6 @@ fn should_ignore(path: &Path, watch_dir: &Path, ignored_dirs: &[String]) -> bool
     false
 }
 
-// ---------------------------------------------------------------------------
-// Hardlink helpers
-// ---------------------------------------------------------------------------
-
-fn create_link(src: &Path, link: &Path) -> Result<bool> {
-    if let Some(parent) = link.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create_dir_all {}", parent.display()))?;
-    }
-
-    if link.exists() {
-        if link.metadata()?.ino() == src.metadata()?.ino() {
-            debug!("Link already correct: {}", link.display());
-            return Ok(false);
-        }
-        std::fs::remove_file(link)
-            .with_context(|| format!("remove stale link {}", link.display()))?;
-        info!("Removed stale link: {}", link.display());
-    }
-
-    match std::fs::hard_link(src, link) {
-        Ok(()) => {
-            info!("Hardlink created: {} <- {}", link.display(), src.display());
-            Ok(true)
-        }
-        Err(e) if e.raw_os_error() == Some(18) => {
-            info!("Hardlink not supported (cross-device), using copy instead: {}", link.display());
-            std::fs::copy(src, link)
-                .with_context(|| format!("copy {} to {}", src.display(), link.display()))?;
-            Ok(true)
-        }
-        Err(e) => Err(e).with_context(|| format!("create link {} <- {}", link.display(), src.display())),
-    }
-}
-
-fn remove_link(link: &Path) -> Result<()> {
-    match std::fs::remove_file(link) {
-        Ok(()) => { info!("Link removed: {}", link.display()); Ok(()) }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("remove link {}", link.display())),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Startup validation
@@ -195,36 +100,6 @@ fn validate_hardlink_permissions(watch_dir: &Path, plex_dir: &Path) -> Result<()
     Ok(())
 }
 
-
-// ---------------------------------------------------------------------------
-// Core: identify file and place it in the Plex tree
-// ---------------------------------------------------------------------------
-
-async fn process_file(src: &Path, cfg: &AppConfig, http: &reqwest::Client) -> Result<bool> {
-    // 1. Parse the raw filename
-    let parsed = parser::parse(src);
-    info!(
-        "Parsed '{}' -> title='{}' year={:?} season={:?} episodes={:?}",
-        src.file_name().unwrap_or_default().to_string_lossy(),
-        parsed.title, parsed.year, parsed.season, parsed.episodes,
-    );
-
-    // 2. TMDB lookup
-    let media_info = tmdb::lookup(
-        http, &cfg.tmdb_api_key,
-        &parsed.title, parsed.year, parsed.season, &parsed.episodes,
-    )
-    .await
-    .with_context(|| format!("TMDB lookup for '{}'", parsed.title))?;
-
-    // 3. Build Plex path
-    let link_path = organizer::build_plex_path(&cfg.plex_dir, &media_info, src);
-    info!("Plex path: {}", link_path.display());
-
-    // 4. Create hardlink
-    create_link(src, &link_path)
-}
-
 // ---------------------------------------------------------------------------
 // File event messages
 // ---------------------------------------------------------------------------
@@ -274,6 +149,7 @@ async fn main() -> Result<()> {
         let (notify_tx, notify_rx) = std::sync::mpsc::channel::<Result<Event, notify::Error>>();
         let mut watcher = RecommendedWatcher::new(notify_tx, NotifyConfig::default())?;
         watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
+        
         info!("Watcher started. Waiting for files...");
 
         std::thread::spawn(move || {
@@ -359,20 +235,58 @@ async fn main() -> Result<()> {
                 deadline = None;
                 let mut needs_refresh = false;
 
+                let mut added_by_folder: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+                let mut root_files: Vec<PathBuf> = Vec::new();
                 for src in pending_added.drain() {
+                    let parent = src.parent().map(Path::to_path_buf);
+                    if parent.as_deref() == Some(watch_dir.as_path()) {
+                        root_files.push(src);
+                        continue;
+                    }
+
+                    let folder = parent.unwrap_or_else(|| watch_dir.clone());
+                    added_by_folder.entry(folder).or_default().push(src);
+                }
+
+                for src in root_files {
                     match process_file(&src, &cfg, &http).await {
-                        Ok(true)  => needs_refresh = true,
+                        Ok(true) => needs_refresh = true,
                         Ok(false) => {}
                         Err(e) => {
-                            // TMDB failed: put it in Unsorted so nothing is silently dropped
-                            warn!("Identification failed for {}: {e:#}", src.display());
-                            let fallback = cfg.plex_dir
+                            warn!("Identification failed for file {}: {e:#}", src.display());
+                            let fallback = cfg
+                                .plex_dir
                                 .join("Unsorted")
                                 .join(src.file_name().unwrap_or_default());
                             match create_link(&src, &fallback) {
-                                Ok(true)  => needs_refresh = true,
+                                Ok(true) => needs_refresh = true,
                                 Ok(false) => {}
-                                Err(e2)   => error!("{e2:#}"),
+                                Err(e2) => error!("{e2:#}"),
+                            }
+                        }
+                    }
+                }
+
+                for files in added_by_folder.into_values() {
+                    match process_folder(&files, &cfg, &http).await {
+                        Ok(true) => needs_refresh = true,
+                        Ok(false) => {}
+                        Err(e) => {
+                            // Metadata lookup failed: put files in Unsorted so nothing is dropped
+                            let folder_label = files[0]
+                                .parent()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|| "<unknown>".to_string());
+                            warn!("Identification failed for folder {}: {e:#}", folder_label);
+                            for src in files {
+                                let fallback = cfg.plex_dir
+                                    .join("Unsorted")
+                                    .join(src.file_name().unwrap_or_default());
+                                match create_link(&src, &fallback) {
+                                    Ok(true)  => needs_refresh = true,
+                                    Ok(false) => {}
+                                    Err(e2)   => error!("{e2:#}"),
+                                }
                             }
                         }
                     }
@@ -414,27 +328,6 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// Walk the plex tree and remove any hardlink whose inode matches `src`.
-/// Note: When copies are used instead of hardlinks (cross-device scenario),
-/// removed source files will leave orphaned copies in the plex tree.
-fn remove_hardlinks_pointing_to(plex_dir: &Path, src: &Path) -> Result<()> {
-    let src_ino = src.metadata().map(|m| m.ino()).ok();
-
-    fn walk(dir: &Path, src_ino: Option<u64>, src: &Path) -> Result<()> {
-        for entry in std::fs::read_dir(dir)?.flatten() {
-            let path = entry.path();
-            if path.is_dir() { walk(&path, src_ino, src)?; }
-            if let Ok(meta) = path.metadata() {
-                if !meta.is_dir() && src_ino == Some(meta.ino()) {
-                    remove_link(&path)?;
-                }
-            }
-        }
-        Ok(())
-    }
-    walk(plex_dir, src_ino, src)
 }
 
 /// Scan for existing video files in the watch directory on startup

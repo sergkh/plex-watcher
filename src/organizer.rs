@@ -79,7 +79,6 @@ mod tests {
             show_title: "Breaking Bad".into(),
             show_year: 2008,
             season: 3,
-            episodes: vec![7],
             tmdb_id: 1,
         };
         let result = build_plex_path(
