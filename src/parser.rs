@@ -74,6 +74,8 @@ pub fn parse(path: &Path) -> ParsedName {
     // Prefer metadata from the first folder in the incoming relative path.
     let folder_hint = extract_from_first_folder(path);
 
+    debug!("Folder hint: {}", folder_hint.clone().unwrap_or_else(|| ("Unknown".into(), None)).0);
+
     // Work on the filename stem only
     let stem = path
         .file_stem()
@@ -222,7 +224,8 @@ fn pre_clean(s: &str) -> String {
 
 /// Replace dots/underscores with spaces and trim.
 fn clean_title(raw: &str) -> String {
-    raw.replace(['.', '_'], " ")
+    raw
+        .replace(['.', '_', '/'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -296,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn should_parse_a_movie_in_the_root() {
+    fn should_parse_a_movie() {
         let r = p("Dust Bunny (2025)/Dust Bunny (2025) WEB-DLRip-AVC Ukr Eng.mkv");
         assert_eq!(r.title, "Dust Bunny");
         assert_eq!(r.year, Some(2025));
@@ -306,9 +309,17 @@ mod tests {
 
     #[test]
     fn should_parse_a_movie_in_the_root_with_tmdbid() {
-        let r = p("'Good Bye, Lenin! (2003) [tmdbid-338].mkv");
+        let r = p("Good Bye, Lenin! (2003) [tmdbid-338].mkv");
         assert_eq!(r.title, "Good Bye, Lenin!");
         assert_eq!(r.year, Some(2003));
+        assert_eq!(r.season, None);
+    }
+
+    #[test]
+    fn should_parse_a_movie_in_the_root() {
+        let r = p("Ladies First 2026 WEB-DL 1080p.mkv");
+        assert_eq!(r.title, "Ladies First");
+        assert_eq!(r.year, Some(2026));
         assert_eq!(r.season, None);
     }
 
