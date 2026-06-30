@@ -10,4 +10,6 @@ FROM gcr.io/distroless/cc-debian13:nonroot
 
 COPY --from=builder /app/target/release/plex-watcher /
 
+EXPOSE 8000
+
 ENTRYPOINT ["/plex-watcher"]

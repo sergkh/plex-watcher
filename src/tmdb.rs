@@ -3,8 +3,8 @@
 //! Requires a free API key from https://www.themoviedb.org/settings/api
 //! Set via the TMDB_API_KEY environment variable.
 
-use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 const BASE: &str = "https://api.themoviedb.org/3";
@@ -24,6 +24,20 @@ pub enum MediaInfo {
         season: u16,
         tmdb_id: u64,
     },
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MediaSearchResult {
+    pub media_type: String,
+    pub title: String,
+    pub year: Option<u16>,
+    pub tmdb_id: u64,
+    pub tmdb_url: String,
+    pub imdb_id: Option<String>,
+    pub imdb_url: Option<String>,
+    pub overview: Option<String>,
+    pub poster_url: Option<String>,
+    pub vote_average: Option<f32>,
 }
 
 // ── TMDB response shapes ──────────────────────────────────────────────────────
@@ -52,6 +66,29 @@ struct SearchTvResp {
     results: Vec<TvResult>,
 }
 
+#[derive(Deserialize)]
+struct SearchMultiResp {
+    results: Vec<MultiResult>,
+}
+
+#[derive(Deserialize)]
+struct MultiResult {
+    id: u64,
+    media_type: String,
+    title: Option<String>,
+    name: Option<String>,
+    release_date: Option<String>,
+    first_air_date: Option<String>,
+    overview: Option<String>,
+    poster_path: Option<String>,
+    vote_average: Option<f32>,
+}
+
+#[derive(Deserialize)]
+struct ExternalIdsResp {
+    imdb_id: Option<String>,
+}
+
 // ── public API ────────────────────────────────────────────────────────────────
 
 /// Look up a media file using parsed metadata from the filename.
@@ -63,7 +100,7 @@ pub async fn lookup(
     api_key: &str,
     title: &str,
     year: Option<u16>,
-    season: Option<u16>
+    season: Option<u16>,
 ) -> Result<MediaInfo> {
     if season.is_some() {
         // Looks like a TV episode — search TV first
@@ -85,6 +122,76 @@ pub async fn lookup(
     bail!("No TMDB match found for '{title}'");
 }
 
+pub async fn search_media(
+    client: &reqwest::Client,
+    api_key: &str,
+    query: &str,
+) -> Result<Vec<MediaSearchResult>> {
+    let url = format!(
+        "{BASE}/search/multi?api_key={api_key}&query={}&language=en-US&page=1&include_adult=false",
+        urlencoding(query)
+    );
+
+    debug!("TMDB web media search: {query}");
+    let resp: SearchMultiResp = client
+        .get(&url)
+        .send()
+        .await?
+        .json()
+        .await
+        .context("parse TMDB multi search response")?;
+
+    let mut media = Vec::new();
+    for hit in resp
+        .results
+        .into_iter()
+        .filter(|hit| hit.media_type == "movie" || hit.media_type == "tv")
+        .take(10)
+    {
+        let title = hit.title.or(hit.name).unwrap_or_else(|| "Untitled".into());
+        let date = hit.release_date.or(hit.first_air_date);
+        let year = date
+            .as_deref()
+            .and_then(|d| d.get(..4))
+            .and_then(|y| y.parse().ok());
+        let poster_url = hit
+            .poster_path
+            .as_ref()
+            .map(|path| format!("https://image.tmdb.org/t/p/w342{path}"));
+        let imdb_id = imdb_id_for_media(client, api_key, &hit.media_type, hit.id)
+            .await
+            .ok()
+            .flatten();
+        let imdb_url = imdb_id
+            .as_ref()
+            .map(|id| format!("https://www.imdb.com/title/{id}/"));
+        let tmdb_url = format!(
+            "https://www.themoviedb.org/{}/{}",
+            if hit.media_type == "tv" {
+                "tv"
+            } else {
+                "movie"
+            },
+            hit.id
+        );
+
+        media.push(MediaSearchResult {
+            media_type: hit.media_type,
+            title,
+            year,
+            tmdb_id: hit.id,
+            tmdb_url,
+            imdb_id,
+            imdb_url,
+            overview: hit.overview.filter(|s| !s.is_empty()),
+            poster_url,
+            vote_average: hit.vote_average,
+        });
+    }
+
+    Ok(media)
+}
+
 // ── private helpers ───────────────────────────────────────────────────────────
 
 async fn search_movie(
@@ -102,13 +209,22 @@ async fn search_movie(
     }
 
     debug!("TMDB movie search: {title} ({year:?})");
-    let resp: SearchMovieResp = client.get(&url).send().await?.json().await
+    let resp: SearchMovieResp = client
+        .get(&url)
+        .send()
+        .await?
+        .json()
+        .await
         .context("parse TMDB movie response")?;
 
-    let hit = resp.results.into_iter().next()
+    let hit = resp
+        .results
+        .into_iter()
+        .next()
         .context("no movie results")?;
 
-    let release_year = hit.release_date
+    let release_year = hit
+        .release_date
         .as_deref()
         .and_then(|d| d.get(..4))
         .and_then(|y| y.parse().ok())
@@ -127,7 +243,7 @@ async fn search_tv(
     api_key: &str,
     title: &str,
     year: Option<u16>,
-    season: u16
+    season: u16,
 ) -> Result<MediaInfo> {
     let mut url = format!(
         "{BASE}/search/tv?api_key={api_key}&query={}&language=en-US&page=1",
@@ -138,19 +254,27 @@ async fn search_tv(
     }
 
     debug!("TMDB TV search: {title} ({year:?})");
-    let resp: SearchTvResp = client.get(&url).send().await?.json().await
+    let resp: SearchTvResp = client
+        .get(&url)
+        .send()
+        .await?
+        .json()
+        .await
         .context("parse TMDB TV response")?;
 
-    let hit = resp.results.into_iter().next()
-        .context("no TV results")?;
+    let hit = resp.results.into_iter().next().context("no TV results")?;
 
-    let air_year = hit.first_air_date
+    let air_year = hit
+        .first_air_date
         .as_deref()
         .and_then(|d| d.get(..4))
         .and_then(|y| y.parse().ok())
         .unwrap_or(year.unwrap_or(0));
 
-    info!("TMDB TV match: '{}' ({}) S{:02}", hit.name, air_year, season);
+    info!(
+        "TMDB TV match: '{}' ({}) S{:02}",
+        hit.name, air_year, season
+    );
 
     Ok(MediaInfo::Episode {
         show_title: hit.name,
@@ -158,6 +282,24 @@ async fn search_tv(
         season,
         tmdb_id: hit.id,
     })
+}
+
+async fn imdb_id_for_media(
+    client: &reqwest::Client,
+    api_key: &str,
+    media_type: &str,
+    media_id: u64,
+) -> Result<Option<String>> {
+    let url = format!("{BASE}/{media_type}/{media_id}/external_ids?api_key={api_key}");
+    let resp: ExternalIdsResp = client
+        .get(&url)
+        .send()
+        .await?
+        .json()
+        .await
+        .context("parse TMDB movie external IDs response")?;
+
+    Ok(resp.imdb_id.filter(|id| !id.is_empty()))
 }
 
 fn urlencoding(s: &str) -> String {

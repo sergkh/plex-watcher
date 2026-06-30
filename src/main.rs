@@ -1,9 +1,13 @@
 mod config;
+mod logs;
 mod organizer;
 mod parser;
 mod plex;
 mod processor;
+mod prowlarr;
+mod qbittorrent;
 mod tmdb;
+mod web;
 
 use anyhow::{Context, Result};
 use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -18,8 +22,9 @@ use tokio::{
     time::{sleep, Instant},
 };
 use tracing::{debug, error, info, warn};
+use tracing_subscriber::{prelude::*, EnvFilter};
 
-use config::AppConfig;
+use config::{AppConfig, CONFIG_HELP};
 use processor::{create_link, process_file, process_folder, remove_hardlinks_pointing_to};
 
 // ---------------------------------------------------------------------------
@@ -115,12 +120,19 @@ enum FileEvent {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "plex_watcher=info".into()),
-        )
+    if should_print_help() {
+        println!("{CONFIG_HELP}");
+        return Ok(());
+    }
+
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "plex_watcher=info".into()))
+        .with(tracing_subscriber::fmt::layer())
+        .with(logs::LogLayer)
         .init();
+
+    dotenvy::dotenv().ok();
+    log_configuration_status();
 
     let cfg = AppConfig::from_env().context("load config")?;
     let cfg = Arc::new(cfg);
@@ -131,6 +143,7 @@ async fn main() -> Result<()> {
     info!("Debounce:  {}ms", cfg.debounce_ms);
     info!("Polling:   {}", if cfg.enable_polling { "enabled" } else { "disabled" });
     info!("Ignored:   {:?}", cfg.ignored_dirs);
+    info!("Web UI:    http://{}", cfg.web_addr);
 
     validate_hardlink_permissions(&cfg.watch_dir, &cfg.plex_dir).context("validate hardlink permissions")?;
     info!("Hardlink permissions validated");
@@ -138,6 +151,14 @@ async fn main() -> Result<()> {
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
+
+    let web_cfg = Arc::clone(&cfg);
+    let web_http = http.clone();
+    tokio::spawn(async move {
+        if let Err(e) = web::serve(web_cfg, web_http).await {
+            error!("Web UI stopped: {e:#}");
+        }
+    });
 
     let (tx, mut rx) = mpsc::unbounded_channel::<FileEvent>();
 
@@ -328,6 +349,58 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn should_print_help() -> bool {
+    std::env::args()
+        .skip(1)
+        .any(|arg| matches!(arg.as_str(), "help" | "--help" | "-h"))
+}
+
+fn log_configuration_status() {
+    if env_is_set("TMDB_API_KEY") {
+        info!("TMDb integration configured");
+    } else {
+        error!("TMDb integration is not configured: set TMDB_API_KEY");
+    }
+
+    log_optional_integration_status(
+        "qBittorrent",
+        &[
+            "QBITTORRENT_URL",
+            "QBITTORRENT_USERNAME",
+            "QBITTORRENT_PASSWORD",
+        ],
+    );
+    log_optional_integration_status("Prowlarr", &["PROWLARR_URL", "PROWLARR_API_KEY"]);
+}
+
+fn log_optional_integration_status(name: &str, required_vars: &[&str]) {
+    let missing: Vec<_> = required_vars
+        .iter()
+        .copied()
+        .filter(|var| !env_is_set(var))
+        .collect();
+
+    if missing.is_empty() {
+        info!("{name} integration configured");
+    } else if missing.len() == required_vars.len() {
+        warn!(
+            "{name} integration is not configured: set {}",
+            required_vars.join(", ")
+        );
+    } else {
+        warn!(
+            "{name} integration is partially configured; missing {}",
+            missing.join(", ")
+        );
+    }
+}
+
+fn env_is_set(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
 }
 
 /// Scan for existing video files in the watch directory on startup

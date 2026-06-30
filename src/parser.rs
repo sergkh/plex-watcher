@@ -53,7 +53,7 @@ static RE_YEAR: Lazy<Regex> = Lazy::new(|| {
 /// Common release junk that marks the end of the meaningful title
 static RE_JUNK: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"(?i)[. _-](1080p|2160p|720p|480p|4k|uhd|bluray|blu-ray|bdrip|brrip|dvdrip|web-?dl|webrip|hdtv|proper|repack|extended|theatrical|directors\.cut|YIFY|RARBG|x264|x265|h\.?264|h\.?265|avc|hevc|xvid|divx|aac|ac3|dts|truehd|atmos|10bit|hdr|dovi|remux|atvp).*,?",
+        r"(?i)[\(. _-](1080p|2160p|720p|480p|4k|uhd|bluray|blu-ray|bdrip|brrip|dvdrip|web-?dl|webrip|hdtv|proper|repack|extended|theatrical|directors\.cut|YIFY|RARBG|x264|x265|h\.?264|h\.?265|avc|hevc|xvid|divx|aac|ac3|dts|truehd|atmos|10bit|hdr|dovi|remux|atvp).*,?",
     )
     .unwrap()
 });
@@ -268,6 +268,16 @@ mod tests {
 
     fn p(s: &str) -> ParsedName {
         parse(Path::new(s))
+    }
+
+
+    #[test]
+    fn should_parse_episodes_with_extra_info() {
+        let r = p("Obi-Wan Kenobi (2022) S01 (1080p BluRay x265 10bit EAC3 Atmos 7.1 Ghost)/Obi-Wan Kenobi (2022) - S01E06 - Part VI (1080p BluRay x265 Ghost).mkv");
+        assert_eq!(r.title, "Obi-Wan Kenobi");
+        assert_eq!(r.year, Some(2022));
+        assert_eq!(r.season, Some(1));        
+        assert_eq!(r.episodes, vec![6]);
     }
 
     #[test]

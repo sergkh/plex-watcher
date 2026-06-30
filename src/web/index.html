@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plex Watcher Search</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f7f9;
+      --fg: #1f252e;
+      --muted: #667085;
+      --line: #d0d5dd;
+      --panel: #ffffff;
+      --accent: #c98900;
+      --accent-fg: #1b1400;
+      --danger: #b42318;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #101418;
+        --fg: #eef2f6;
+        --muted: #a9b3c1;
+        --line: #303946;
+        --panel: #171d24;
+        --accent: #f0b43c;
+        --accent-fg: #241800;
+        --danger: #ffb4ab;
+      }
+    }
+    * { box-sizing: border-box; }
+    [x-cloak] { display: none !important; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+    main {
+      position: relative;
+      width: min(1060px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 48px 0 56px;
+    }
+    header {
+      margin-bottom: 20px;
+    }
+    .header-main {
+      min-width: 0;
+    }
+    .nav-button {
+      width: 32px;
+      min-height: 32px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+    }
+    .nav-actions {
+      position: absolute;
+      top: 8px;
+      right: 0;
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .nav-button:hover,
+    .nav-button:focus-visible {
+      border-color: var(--line);
+      background: var(--panel);
+      color: var(--fg);
+    }
+    .nav-button svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 3vw, 42px);
+      font-weight: 750;
+      letter-spacing: 0;
+    }
+    .source {
+      color: var(--muted);
+      font-size: 14px;
+      white-space: nowrap;
+    }
+    form {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+    input {
+      width: 100%;
+      min-height: 46px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--fg);
+      padding: 0 14px;
+      font: inherit;
+      outline: none;
+    }
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent), transparent 75%);
+    }
+    button {
+      min-height: 46px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: var(--accent-fg);
+      padding: 0 18px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:disabled {
+      cursor: wait;
+      opacity: 0.7;
+    }
+    .status {
+      min-height: 24px;
+      margin-bottom: 14px;
+      color: var(--muted);
+    }
+    .status.error {
+      color: var(--danger);
+    }
+    .results {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+    .page[hidden] {
+      display: none;
+    }
+    .downloads {
+      margin: 28px 0;
+      padding-top: 22px;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .toolbar h2 {
+      margin: 0;
+      font-size: 20px;
+    }
+    .torrent-list {
+      display: grid;
+      gap: 8px;
+    }
+    .torrent {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 10px 12px;
+    }
+    .torrent strong {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .torrent .path {
+      grid-column: 1 / -1;
+      color: var(--muted);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .torrent button {
+      min-height: 34px;
+      padding: 0 12px;
+      font-size: 14px;
+    }
+    .log-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+    }
+    .log-entry {
+      display: block;
+      padding: 1px 0;
+      overflow-wrap: anywhere;
+    }
+    .log-entry .meta {
+      color: var(--muted);
+      margin-right: 8px;
+    }
+    .log-entry .message {
+      color: var(--fg);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .actions button {
+      min-height: 34px;
+      padding: 0 12px;
+      font-size: 14px;
+    }
+    .result-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .result-links a {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 5px 8px;
+    }
+    .result-links a:hover {
+      border-color: var(--accent);
+      color: var(--fg);
+      text-decoration: none;
+    }
+    .inline-torrents {
+      grid-column: 1 / -1;
+      display: none;
+    }
+    .inline-torrents.open {
+      display: block;
+      border-top: 1px solid var(--line);
+      padding-top: 10px;
+    }
+    .inline-torrents .status {
+      margin-bottom: 8px;
+    }
+    article {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 16px;
+      min-height: 230px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 12px;
+    }
+    .poster {
+      width: 150px;
+      aspect-ratio: 2 / 3;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--line), transparent 30%);
+      object-fit: cover;
+    }
+    .poster.empty {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+      padding: 8px;
+    }
+    .result-body {
+      min-width: 0;
+    }
+    h2 {
+      margin: 0 0 4px;
+      font-size: 22px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .meta-line {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0 0 10px;
+    }
+    .detail {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 8px;
+    }
+    .detail-label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.2;
+      margin-bottom: 2px;
+    }
+    .detail-value {
+      display: block;
+      color: var(--fg);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+    p {
+      display: -webkit-box;
+      -webkit-line-clamp: 6;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    @media (max-width: 560px) {
+      main {
+        width: min(100vw - 20px, 1060px);
+        padding-top: 52px;
+      }
+      .source {
+        white-space: normal;
+      }
+      form {
+        grid-template-columns: 1fr;
+      }
+      .toolbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .torrent {
+        grid-template-columns: 1fr;
+      }
+      article {
+        grid-template-columns: 112px 1fr;
+        min-height: 178px;
+      }
+      .poster {
+        width: 112px;
+      }
+      h2 {
+        font-size: 18px;
+      }
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+      .log-entry {
+        grid-template-columns: 1fr;
+      }
+      button {
+        width: 100%;
+      }
+      .nav-actions {
+        top: 10px;
+      }
+      .nav-button {
+        width: 32px;
+      }
+    }
+  </style>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+  <main x-data="mediaApp()" x-cloak>
+    <header>
+      <div class="header-main">
+        <h1 x-text="pageTitle"></h1>
+        <div class="source" x-text="pageSource"></div>
+      </div>
+      <div class="nav-actions">
+        <button class="nav-button" type="button" aria-label="Search" title="Search" x-show="page !== 'search'" @click="showSearchPage()">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="m20 20-4-4"></path>
+          </svg>
+        </button>
+        <button class="nav-button" type="button" aria-label="Downloads" title="Downloads" x-show="page !== 'downloads'" @click="showDownloadsPage()">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v12"></path>
+            <path d="m7 10 5 5 5-5"></path>
+            <path d="M5 21h14"></path>
+          </svg>
+        </button>
+        <button class="nav-button" type="button" aria-label="Logs" title="Logs" x-show="page !== 'logs'" @click="showLogsPage()">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 6h16"></path>
+            <path d="M4 12h16"></path>
+            <path d="M4 18h10"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="page" x-show="page === 'search'">
+      <form autocomplete="off" @submit.prevent="search">
+        <input x-ref="query" x-model="query" name="q" type="search" placeholder="Search for a movie or TV show" autofocus>
+        <button type="submit" :disabled="searchLoading">Search</button>
+      </form>
+
+      <div class="status" :class="{ error: searchError }" x-text="searchStatus"></div>
+      <section class="results" aria-live="polite">
+        <template x-for="item in results" :key="`${item.media_type}-${item.tmdb_id}`">
+          <article>
+            <template x-if="item.poster_url">
+              <img class="poster" :src="item.poster_url" :alt="`${item.title} poster`" loading="lazy">
+            </template>
+            <template x-if="!item.poster_url">
+              <div class="poster empty">No poster</div>
+            </template>
+
+            <div class="result-body">
+              <h2 x-text="resultTitle(item)"></h2>
+              <div class="meta-line">
+                <div class="meta" x-text="resultMeta(item)"></div>
+                <div class="result-links">
+                  <a :href="item.tmdb_url" target="_blank" rel="noreferrer">TMDb</a>
+                  <template x-if="item.imdb_url">
+                    <a :href="item.imdb_url" target="_blank" rel="noreferrer">IMDb</a>
+                  </template>
+                </div>
+              </div>
+              
+              <p x-text="item.overview || 'No overview available.'"></p>
+              <div class="actions">
+                <button type="button" :disabled="item.torrentLoading" @click="toggleProwlarr(item)" x-text="torrentButtonText(item)"></button>
+              </div>
+
+            </div>
+
+            <div class="inline-torrents" :class="{ open: item.torrentOpen }">
+              <div class="status" :class="{ error: item.torrentStatusError }" x-text="item.torrentStatus"></div>
+              <div class="torrent-list">
+                <template x-for="result in item.torrentResults" :key="result.magnet_uri || result.title">
+                  <div class="torrent">
+                    <strong x-text="result.title"></strong>
+                    <button type="button" :disabled="result.adding" @click="addTorrentSource(result.magnet_uri, result)" x-text="result.adding ? 'Adding...' : 'Download'"></button>
+                    <span class="meta" x-text="`${result.seeders} seeders · ${result.leechers} leechers · ${result.size}`"></span>
+                    <div class="path" x-text="result.indexer"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </article>
+        </template>
+      </section>
+    </section>
+
+    <section class="page downloads" x-show="page === 'downloads'">
+      <div class="toolbar">
+        <h2>Downloads</h2>
+      </div>
+      <div class="status" :class="{ error: torrentStatusError }" x-text="torrentStatus"></div>
+      <div class="torrent-list" aria-live="polite">
+        <template x-for="torrent in torrents" :key="torrent.id">
+          <div class="torrent">
+            <strong x-text="torrent.name || torrent.id"></strong>
+            <span class="meta" x-text="`${torrent.progress_percent.toFixed(1)}% · ${torrent.state}`"></span>
+            <div class="path" x-text="torrent.save_path || torrent.id"></div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <section class="page downloads" x-show="page === 'logs'">
+      <div class="toolbar">
+        <h2>Logs</h2>
+      </div>
+      <div class="status" :class="{ error: logsStatusError }" x-text="logsStatus"></div>
+      <div class="log-list" aria-live="polite">
+        <template x-for="entry in orderedLogs" :key="`${entry.timestamp_ms}-${entry.level}-${entry.message}`">
+          <div class="log-entry">
+            <span class="meta" x-text="logMeta(entry)"></span>
+            <span class="message" x-text="entry.message"></span>
+          </div>
+        </template>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function mediaApp() {
+      return {
+        page: "search",
+        query: "",
+        searchLoading: false,
+        searchError: false,
+        searchStatus: "",
+        results: [],
+        torrents: [],
+        torrentStatus: "",
+        torrentStatusError: false,
+        torrentRefreshTimer: null,
+        logs: [],
+        logsStatus: "",
+        logsStatusError: false,
+        logsRefreshTimer: null,
+
+        get pageTitle() {
+          return this.page === "downloads" ? "Downloads" : this.page === "logs" ? "Logs" : "Search";
+        },
+
+        get pageSource() {
+          if (this.page === "downloads") return "qBittorrent status";
+          if (this.page === "logs") return "Server watch logs";
+          return "TMDb movie and TV search with IMDb links";
+        },
+
+        get orderedLogs() {
+          return this.logs.slice().reverse();
+        },
+
+        async search() {
+          const q = this.query.trim();
+          this.results = [];
+          this.searchError = false;
+
+          if (!q) {
+            this.searchStatus = "Enter a movie or TV title.";
+            return;
+          }
+
+          this.searchLoading = true;
+          this.searchStatus = "Searching...";
+
+          try {
+            const response = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+            if (!response.ok) throw new Error(await response.text());
+
+            const items = await response.json();
+            this.results = items.map((item) => ({
+              ...item,
+              torrentOpen: false,
+              torrentLoaded: false,
+              torrentLoading: false,
+              torrentStatus: "",
+              torrentStatusError: false,
+              torrentResults: [],
+            }));
+
+            this.searchStatus = items.length
+              ? `${items.length} result${items.length === 1 ? "" : "s"}`
+              : "No movies or TV shows found.";
+          } catch (error) {
+            this.searchError = true;
+            this.searchStatus = error.message || "Search failed.";
+          } finally {
+            this.searchLoading = false;
+          }
+        },
+
+        showSearchPage() {
+          this.stopTorrentRefresh();
+          this.stopLogsRefresh();
+          this.page = "search";
+          this.$nextTick(() => this.$refs.query?.focus());
+        },
+
+        showDownloadsPage() {
+          this.stopLogsRefresh();
+          this.page = "downloads";
+          this.loadTorrents();
+          this.startTorrentRefresh();
+        },
+
+        showLogsPage() {
+          this.stopTorrentRefresh();
+          this.page = "logs";
+          this.loadLogs();
+          this.startLogsRefresh();
+        },
+
+        resultTitle(item) {
+          return item.year ? `${item.title} (${item.year})` : item.title;
+        },
+
+        resultMeta(item) {
+          return [
+            item.media_type === "tv" ? "TV" : "Movie",
+            item.year || null,
+            item.vote_average ? `TMDb rating ${item.vote_average.toFixed(1)}` : "No TMDb rating",
+          ].filter(Boolean).join(" · ");
+        },
+
+        resultDetails(item) {
+          return [
+            { label: "Type", value: item.media_type === "tv" ? "TV Show" : "Movie" },
+            { label: "Year", value: item.year || "Unknown" },
+            { label: "TMDb Rating", value: item.vote_average ? `${item.vote_average.toFixed(1)} / 10` : "Unrated" },
+            { label: "TMDb ID", value: `#${item.tmdb_id}` },
+            { label: "IMDb ID", value: item.imdb_id || "Not linked" },
+          ];
+        },
+
+        torrentButtonText(item) {
+          if (item.torrentLoading) return "Searching...";
+          if (item.torrentOpen) return "Close torrents";
+          return item.torrentLoaded ? "Open torrents" : "Search torrents";
+        },
+
+        async toggleProwlarr(item) {
+          if (item.torrentOpen) {
+            item.torrentOpen = false;
+            return;
+          }
+
+          if (item.torrentLoaded) {
+            item.torrentOpen = true;
+            return;
+          }
+
+          await this.searchProwlarrForItem(item);
+        },
+
+        async searchProwlarrForItem(item) {
+          const q = item.year && item.media_type === "movie" ? `${item.title} ${item.year}` : item.title;
+          item.torrentOpen = true;
+          item.torrentLoading = true;
+          item.torrentStatusError = false;
+          item.torrentStatus = `Searching torrents for ${q}...`;
+          item.torrentResults = [];
+
+          try {
+            const response = await fetch(`/api/prowlarr/search?q=${encodeURIComponent(q)}`);
+            if (!response.ok) throw new Error(await response.text());
+
+            const results = await response.json();
+            item.torrentResults = results.map((result) => ({ ...result, adding: false }));
+            item.torrentLoaded = true;
+            item.torrentStatus = results.length
+              ? `${results.length} torrent result${results.length === 1 ? "" : "s"}`
+              : "No torrent results found.";
+          } catch (error) {
+            item.torrentStatusError = true;
+            item.torrentStatus = error.message || "Torrent search failed.";
+          } finally {
+            item.torrentLoading = false;
+          }
+        },
+
+        async loadTorrents() {
+          this.torrentStatusError = false;
+          this.torrentStatus = "Loading downloads...";
+
+          try {
+            const response = await fetch("/api/torrents");
+            if (!response.ok) throw new Error(await response.text());
+
+            this.torrents = await response.json();
+            this.torrentStatus = this.torrents.length
+              ? `${this.torrents.length} download${this.torrents.length === 1 ? "" : "s"}`
+              : "No active downloads.";
+          } catch (error) {
+            this.torrents = [];
+            this.torrentStatusError = true;
+            this.torrentStatus = error.message || "Downloads unavailable.";
+          }
+        },
+
+        startTorrentRefresh() {
+          this.stopTorrentRefresh();
+          this.torrentRefreshTimer = window.setInterval(() => {
+            if (this.page === "downloads") this.loadTorrents();
+          }, 10000);
+        },
+
+        stopTorrentRefresh() {
+          if (this.torrentRefreshTimer !== null) {
+            window.clearInterval(this.torrentRefreshTimer);
+            this.torrentRefreshTimer = null;
+          }
+        },
+
+        async loadLogs() {
+          this.logsStatusError = false;
+          this.logsStatus = "Loading logs...";
+
+          try {
+            const response = await fetch("/api/logs");
+            if (!response.ok) throw new Error(await response.text());
+
+            this.logs = await response.json();
+            this.logsStatus = this.logs.length
+              ? `${this.logs.length} log entr${this.logs.length === 1 ? "y" : "ies"}`
+              : "No logs captured yet.";
+          } catch (error) {
+            this.logs = [];
+            this.logsStatusError = true;
+            this.logsStatus = error.message || "Logs unavailable.";
+          }
+        },
+
+        startLogsRefresh() {
+          this.stopLogsRefresh();
+          this.logsRefreshTimer = window.setInterval(() => {
+            if (this.page === "logs") this.loadLogs();
+          }, 10000);
+        },
+
+        stopLogsRefresh() {
+          if (this.logsRefreshTimer !== null) {
+            window.clearInterval(this.logsRefreshTimer);
+            this.logsRefreshTimer = null;
+          }
+        },
+
+        logMeta(entry) {
+          return `${new Date(entry.timestamp_ms).toLocaleTimeString()} ${entry.level} ${entry.target}`;
+        },
+
+        async addTorrentSource(value, result) {
+          this.torrentStatusError = false;
+
+          if (!value) {
+            this.torrentStatus = "Missing torrent download URL.";
+            return;
+          }
+
+          result.adding = true;
+          this.torrentStatus = "Adding torrent...";
+
+          try {
+            const response = await fetch("/api/torrents/add", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ magnet_uri: value }),
+            });
+            if (!response.ok) throw new Error(await response.text());
+
+            this.torrents = await response.json();
+            this.torrentStatus = this.torrents.length
+              ? `${this.torrents.length} download${this.torrents.length === 1 ? "" : "s"}`
+              : "No active downloads.";
+          } catch (error) {
+            this.torrentStatusError = true;
+            this.torrentStatus = error.message || "Add failed.";
+          } finally {
+            result.adding = false;
+          }
+        },
+      };
+    }
+  </script>
+</body>
+</html>

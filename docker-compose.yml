@@ -16,9 +16,22 @@ services:
       PLEX_LIBRARY_IDS: ""
       # Comma-separated direct subfolders to ignore (default: incomplete)
       IGNORE_DIRS: incomplete
+      # Web UI bind address
+      WEB_ADDR: 0.0.0.0:8000
+      # Optional qBittorrent Web API integration
+      QBITTORRENT_URL: http://qbittorrent:8080
+      QBITTORRENT_USERNAME: admin
+      QBITTORRENT_PASSWORD: adminadmin
+      # Optional Prowlarr torrent search integration
+      PROWLARR_URL: http://prowlarr:9696
+      PROWLARR_API_KEY: your_prowlarr_api_key_here
+      # Optional comma-separated indexer IDs; empty = all enabled indexers
+      PROWLARR_INDEXER_IDS: ""
       # Quiet period (ms) after last file event before notifying Plex
       PLEX_NOTIFY_DEBOUNCE_MS: 10000
       # Log level: error | warn | info | debug | trace
       RUST_LOG: plex_watcher=info
     volumes:
       - ./media:/media/:rw
+    ports:
+      - "8000:8000"
