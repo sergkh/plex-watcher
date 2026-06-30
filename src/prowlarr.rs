@@ -1,5 +1,5 @@
 use crate::config::ProwlarrConfig;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use reqwest::header::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use tracing::info;

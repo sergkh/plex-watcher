@@ -160,6 +160,31 @@
       margin: 0;
       font-size: 20px;
     }
+    .icon-button {
+      width: 32px;
+      min-height: 32px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+    }
+    .icon-button:hover,
+    .icon-button:focus-visible {
+      border-color: var(--line);
+      background: var(--panel);
+      color: var(--fg);
+    }
+    .icon-button svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
     .torrent-list {
       display: grid;
       gap: 8px;
@@ -187,6 +212,31 @@
       min-height: 34px;
       padding: 0 12px;
       font-size: 14px;
+    }
+    .watch-list {
+      display: grid;
+      gap: 6px;
+    }
+    .watch-entry {
+      display: grid;
+      grid-template-columns: 70px 1fr auto auto auto;
+      gap: 8px 12px;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      padding: 7px 0;
+    }
+    .watch-entry strong {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .watch-entry span {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .watch-entry button {
+      width: 30px;
+      min-height: 30px;
     }
     .log-list {
       display: flex;
@@ -358,6 +408,12 @@
       .torrent {
         grid-template-columns: 1fr;
       }
+      .watch-entry {
+        grid-template-columns: 1fr;
+      }
+      .watch-entry span {
+        white-space: normal;
+      }
       article {
         grid-template-columns: 112px 1fr;
         min-height: 178px;
@@ -406,6 +462,12 @@
             <path d="M12 3v12"></path>
             <path d="m7 10 5 5 5-5"></path>
             <path d="M5 21h14"></path>
+          </svg>
+        </button>
+        <button class="nav-button" type="button" aria-label="Watched folder" title="Watched folder" x-show="page !== 'watch'" @click="showWatchPage()">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 7h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path>
+            <path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v2"></path>
           </svg>
         </button>
         <button class="nav-button" type="button" aria-label="Logs" title="Logs" x-show="page !== 'logs'" @click="showLogsPage()">
@@ -460,7 +522,7 @@
                 <template x-for="result in item.torrentResults" :key="result.magnet_uri || result.title">
                   <div class="torrent">
                     <strong x-text="result.title"></strong>
-                    <button type="button" :disabled="result.adding" @click="addTorrentSource(result.magnet_uri, result)" x-text="result.adding ? 'Adding...' : 'Download'"></button>
+                    <button type="button" :disabled="result.adding" @click="addTorrentSource(result.magnet_uri, result, item)" x-text="result.adding ? 'Adding...' : 'Download'"></button>
                     <span class="meta" x-text="`${result.seeders} seeders · ${result.leechers} leechers · ${result.size}`"></span>
                     <div class="path" x-text="result.indexer"></div>
                   </div>
@@ -483,6 +545,35 @@
             <strong x-text="torrent.name || torrent.id"></strong>
             <span class="meta" x-text="`${torrent.progress_percent.toFixed(1)}% · ${torrent.state}`"></span>
             <div class="path" x-text="torrent.save_path || torrent.id"></div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <section class="page downloads" x-show="page === 'watch'">
+      <div class="toolbar">
+        <h2>Watched Folder</h2>
+        <button class="icon-button" type="button" :disabled="rescanLoading" @click="rescanWatchDir()" :aria-label="rescanLoading ? 'Scanning watched folder' : 'Rescan watched folder'" :title="rescanLoading ? 'Scanning...' : 'Rescan'">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+            <path d="M21 3v6h-6"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="status" :class="{ error: watchStatusError }" x-text="watchStatus"></div>
+      <div class="watch-list" aria-live="polite">
+        <template x-for="entry in watchEntries" :key="entry.path">
+          <div class="watch-entry">
+            <span x-text="entry.kind"></span>
+            <strong x-text="entry.path"></strong>
+            <span x-text="formatBytes(entry.size_bytes)"></span>
+            <span x-text="formatModified(entry.modified_ms)"></span>
+            <button class="icon-button" type="button" :disabled="entry.renaming" @click="renameWatchEntry(entry)" :aria-label="entry.renaming ? `Renaming ${entry.name}` : `Rename ${entry.name}`" :title="entry.renaming ? 'Renaming...' : 'Rename'">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+              </svg>
+            </button>
           </div>
         </template>
       </div>
@@ -517,17 +608,25 @@
         torrentStatus: "",
         torrentStatusError: false,
         torrentRefreshTimer: null,
+        watchEntries: [],
+        watchStatus: "",
+        watchStatusError: false,
+        rescanLoading: false,
         logs: [],
         logsStatus: "",
         logsStatusError: false,
         logsRefreshTimer: null,
 
         get pageTitle() {
-          return this.page === "downloads" ? "Downloads" : this.page === "logs" ? "Logs" : "Search";
+          if (this.page === "downloads") return "Downloads";
+          if (this.page === "watch") return "Watched Folder";
+          if (this.page === "logs") return "Logs";
+          return "Search";
         },
 
         get pageSource() {
           if (this.page === "downloads") return "qBittorrent status";
+          if (this.page === "watch") return "Current watched directory contents";
           if (this.page === "logs") return "Server watch logs";
           return "TMDb movie and TV search with IMDb links";
         },
@@ -587,6 +686,13 @@
           this.page = "downloads";
           this.loadTorrents();
           this.startTorrentRefresh();
+        },
+
+        showWatchPage() {
+          this.stopTorrentRefresh();
+          this.stopLogsRefresh();
+          this.page = "watch";
+          this.loadWatchEntries();
         },
 
         showLogsPage() {
@@ -697,6 +803,99 @@
           }
         },
 
+        async loadWatchEntries() {
+          this.watchStatusError = false;
+          this.watchStatus = "Loading watched folder...";
+
+          try {
+            const response = await fetch("/api/watch");
+            if (!response.ok) throw new Error(await response.text());
+
+            this.watchEntries = (await response.json()).map((entry) => ({ ...entry, renaming: false }));
+            this.watchStatus = this.watchEntries.length
+              ? `${this.watchEntries.length} item${this.watchEntries.length === 1 ? "" : "s"}`
+              : "Watched folder is empty.";
+          } catch (error) {
+            this.watchEntries = [];
+            this.watchStatusError = true;
+            this.watchStatus = error.message || "Watched folder unavailable.";
+          }
+        },
+
+        async renameWatchEntry(entry) {
+          const newName = window.prompt("Rename watched item", entry.name);
+          if (newName === null) return;
+
+          const trimmed = newName.trim();
+          if (!trimmed || trimmed === entry.name) return;
+
+          this.watchStatusError = false;
+          entry.renaming = true;
+          this.watchStatus = `Renaming ${entry.name}...`;
+
+          try {
+            const response = await fetch("/api/watch/rename", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ path: entry.path, new_name: trimmed }),
+            });
+            if (!response.ok) throw new Error(await response.text());
+
+            this.watchEntries = (await response.json()).map((item) => ({ ...item, renaming: false }));
+            this.watchStatus = `Renamed ${entry.name} to ${trimmed}.`;
+          } catch (error) {
+            this.watchStatusError = true;
+            this.watchStatus = error.message || "Rename failed.";
+          } finally {
+            entry.renaming = false;
+          }
+        },
+
+        async rescanWatchDir() {
+          this.watchStatusError = false;
+          this.rescanLoading = true;
+          this.watchStatus = "Scanning watched folder...";
+
+          try {
+            const response = await fetch("/api/watch/rescan", { method: "POST" });
+            if (!response.ok) throw new Error(await response.text());
+
+            const result = await response.json();
+            const summary = [
+              `${result.found_files} found`,
+              `${result.processed_files} processed`,
+              `${result.changed_files} changed`,
+              result.failed_files ? `${result.failed_files} failed` : null,
+              result.plex_notified ? "Plex notified" : null,
+            ].filter(Boolean).join(" · ");
+            await this.loadWatchEntries();
+            this.watchStatusError = false;
+            this.watchStatus = summary;
+          } catch (error) {
+            this.watchStatusError = true;
+            this.watchStatus = error.message || "Rescan failed.";
+          } finally {
+            this.rescanLoading = false;
+          }
+        },
+
+        formatBytes(value) {
+          if (value === null || value === undefined) return "";
+          if (value < 1024) return `${value} B`;
+          const units = ["KB", "MB", "GB", "TB"];
+          let size = value / 1024;
+          let unit = 0;
+          while (size >= 1024 && unit < units.length - 1) {
+            size /= 1024;
+            unit += 1;
+          }
+          return `${size.toFixed(size >= 10 ? 1 : 2)} ${units[unit]}`;
+        },
+
+        formatModified(value) {
+          return value ? new Date(Number(value)).toLocaleString() : "";
+        },
+
         async loadLogs() {
           this.logsStatusError = false;
           this.logsStatus = "Loading logs...";
@@ -734,7 +933,7 @@
           return `${new Date(entry.timestamp_ms).toLocaleTimeString()} ${entry.level} ${entry.target}`;
         },
 
-        async addTorrentSource(value, result) {
+        async addTorrentSource(value, result, item) {
           this.torrentStatusError = false;
 
           if (!value) {
@@ -749,7 +948,12 @@
             const response = await fetch("/api/torrents/add", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ magnet_uri: value }),
+              body: JSON.stringify({
+                magnet_uri: value,
+                tmdb_title: item?.title,
+                tmdb_id: item?.tmdb_id,
+                tmdb_year: item?.year,
+              }),
             });
             if (!response.ok) throw new Error(await response.text());
 

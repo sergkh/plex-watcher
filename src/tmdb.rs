@@ -100,8 +100,21 @@ pub async fn lookup(
     api_key: &str,
     title: &str,
     year: Option<u16>,
+    tmdb_id: Option<u64>,
     season: Option<u16>,
 ) -> Result<MediaInfo> {
+    if let Some(tmdb_id) = tmdb_id {
+        match lookup_by_tmdb_id(client, api_key, tmdb_id, season).await {
+            Ok(info) => return Ok(info),
+            Err(e) => {
+                info!(
+                    "TMDB id lookup failed for id={} title='{}', falling back to search: {e:#}",
+                    tmdb_id, title
+                );
+            }
+        }
+    }
+
     if season.is_some() {
         // Looks like a TV episode — search TV first
         if let Ok(info) = search_tv(client, api_key, title, year, season.unwrap()).await {
@@ -193,6 +206,99 @@ pub async fn search_media(
 }
 
 // ── private helpers ───────────────────────────────────────────────────────────
+
+async fn lookup_by_tmdb_id(
+    client: &reqwest::Client,
+    api_key: &str,
+    tmdb_id: u64,
+    season: Option<u16>,
+) -> Result<MediaInfo> {
+    if let Some(season) = season {
+        if let Ok(info) = lookup_tv_by_id(client, api_key, tmdb_id, season).await {
+            return Ok(info);
+        }
+        return lookup_movie_by_id(client, api_key, tmdb_id).await;
+    }
+
+    if let Ok(info) = lookup_movie_by_id(client, api_key, tmdb_id).await {
+        return Ok(info);
+    }
+    lookup_tv_by_id(client, api_key, tmdb_id, 1).await
+}
+
+async fn lookup_movie_by_id(
+    client: &reqwest::Client,
+    api_key: &str,
+    tmdb_id: u64,
+) -> Result<MediaInfo> {
+    let url = format!("{BASE}/movie/{tmdb_id}?api_key={api_key}&language=en-US");
+    debug!("TMDB movie id lookup: {tmdb_id}");
+    let response = client.get(&url).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        let details = response.text().await.unwrap_or_default();
+        bail!("TMDB movie id lookup failed ({status}): {}", details.trim());
+    }
+
+    let hit: MovieResult = response
+        .json()
+        .await
+        .context("parse TMDB movie details response")?;
+    let release_year = hit
+        .release_date
+        .as_deref()
+        .and_then(|d| d.get(..4))
+        .and_then(|y| y.parse().ok())
+        .unwrap_or(0);
+
+    info!(
+        "TMDB movie id match: '{}' ({}) id={}",
+        hit.title, release_year, hit.id
+    );
+    Ok(MediaInfo::Movie {
+        title: hit.title,
+        year: release_year,
+        tmdb_id: hit.id,
+    })
+}
+
+async fn lookup_tv_by_id(
+    client: &reqwest::Client,
+    api_key: &str,
+    tmdb_id: u64,
+    season: u16,
+) -> Result<MediaInfo> {
+    let url = format!("{BASE}/tv/{tmdb_id}?api_key={api_key}&language=en-US");
+    debug!("TMDB TV id lookup: {tmdb_id}");
+    let response = client.get(&url).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        let details = response.text().await.unwrap_or_default();
+        bail!("TMDB TV id lookup failed ({status}): {}", details.trim());
+    }
+
+    let hit: TvResult = response
+        .json()
+        .await
+        .context("parse TMDB TV details response")?;
+    let air_year = hit
+        .first_air_date
+        .as_deref()
+        .and_then(|d| d.get(..4))
+        .and_then(|y| y.parse().ok())
+        .unwrap_or(0);
+
+    info!(
+        "TMDB TV id match: '{}' ({}) S{:02} id={}",
+        hit.name, air_year, season, hit.id
+    );
+    Ok(MediaInfo::Episode {
+        show_title: hit.name,
+        show_year: air_year,
+        season,
+        tmdb_id: hit.id,
+    })
+}
 
 async fn search_movie(
     client: &reqwest::Client,

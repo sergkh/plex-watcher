@@ -6,7 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tracing::{Event, Subscriber};
-use tracing_subscriber::{layer::Context, Layer};
+use tracing_subscriber::{Layer, layer::Context};
 
 const MAX_LOG_ENTRIES: usize = 500;
 

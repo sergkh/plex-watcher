@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::{env, path::PathBuf};
 
 pub const CONFIG_HELP: &str = r#"plex-watcher
@@ -109,8 +109,8 @@ pub struct ProwlarrConfig {
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
         dotenvy::dotenv().ok();
-        let tmdb_api_key = env::var("TMDB_API_KEY")
-            .context("TMDB_API_KEY environment variable is required")?;
+        let tmdb_api_key =
+            env::var("TMDB_API_KEY").context("TMDB_API_KEY environment variable is required")?;
         if tmdb_api_key.trim().is_empty() {
             bail!("TMDB_API_KEY environment variable is required");
         }

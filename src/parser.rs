@@ -11,8 +11,8 @@
 
 use once_cell::sync::Lazy;
 use regex::Regex;
-use tracing::debug;
 use std::path::Path;
+use tracing::debug;
 
 /// Everything the parser could extract from a filename.
 #[derive(Debug, Clone)]
@@ -21,6 +21,8 @@ pub struct ParsedName {
     pub title: String,
     /// Four-digit year, if found
     pub year: Option<u16>,
+    /// TMDb id, if found in tags like [tmdb-123] or [tmdbid-123]
+    pub tmdb_id: Option<u64>,
     /// Season number — `Some` means this looks like a TV episode
     pub season: Option<u16>,
     /// Episode number(s), e.g. `vec![3]` or `vec![3, 4]` for multi-episode files
@@ -36,19 +38,16 @@ impl ParsedName {
 // ── compiled regexes ─────────────────────────────────────────────────────────
 
 /// SnnEnn or SnnEnnEnn (multi-episode), optionally at start of string
-static RE_SXX_EXX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(?:^|[. _-])S(\d{1,2})E(\d{1,2})(?:E(\d{1,2}))*").unwrap()
-});
+static RE_SXX_EXX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(?:^|[. _-])S(\d{1,2})E(\d{1,2})(?:E(\d{1,2}))*").unwrap());
 
 /// 1x03 style, optionally at start of string
-static RE_1X03: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(?:^|[. _-])(\d{1,2})x(\d{2})").unwrap()
-});
+static RE_1X03: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)(?:^|[. _-])(\d{1,2})x(\d{2})").unwrap());
 
 /// Four-digit year, usually surrounded by dots/spaces/parens
-static RE_YEAR: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?:^|[. _(])((19|20)\d{2})(?:[. _)]|$)").unwrap()
-});
+static RE_YEAR: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?:^|[. _(])((19|20)\d{2})(?:[. _)]|$)").unwrap());
 
 /// Common release junk that marks the end of the meaningful title
 static RE_JUNK: Lazy<Regex> = Lazy::new(|| {
@@ -61,6 +60,10 @@ static RE_JUNK: Lazy<Regex> = Lazy::new(|| {
 /// Bracketed metadata tags like [tmdbid-338], [UKR_ENG], [Hurtom]
 static RE_BRACKET_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[[^\]]+\]").unwrap());
 
+/// TMDb id tags, e.g. [tmdbid-338], [tmdb-338], tmdbid=338, tmdb 338
+static RE_TMDB_ID: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\btmdb(?:id)?[\s:_=-]*(\d{1,12})\b").unwrap());
+
 /// Standalone season markers in titles/folders, e.g. .S01. or - S2 -
 static RE_STANDALONE_SEASON: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)(?:^|[. _-])S\d{1,2}(?:$|[. _-])").unwrap());
@@ -68,13 +71,20 @@ static RE_STANDALONE_SEASON: Lazy<Regex> =
 // ── public API ────────────────────────────────────────────────────────────────
 
 pub fn parse(path: &Path) -> ParsedName {
-    
     debug!("Parsing path: {}", path.display());
+
+    let tmdb_id = extract_tmdb_id(&path.to_string_lossy());
 
     // Prefer metadata from the first folder in the incoming relative path.
     let folder_hint = extract_from_first_folder(path);
 
-    debug!("Folder hint: {}", folder_hint.clone().unwrap_or_else(|| ("Unknown".into(), None)).0);
+    debug!(
+        "Folder hint: {}",
+        folder_hint
+            .clone()
+            .unwrap_or_else(|| ("Unknown".into(), None))
+            .0
+    );
 
     // Work on the filename stem only
     let stem = path
@@ -128,6 +138,7 @@ pub fn parse(path: &Path) -> ParsedName {
         return ParsedName {
             title,
             year,
+            tmdb_id,
             season: Some(season),
             episodes,
         };
@@ -169,6 +180,7 @@ pub fn parse(path: &Path) -> ParsedName {
         return ParsedName {
             title,
             year,
+            tmdb_id,
             season: Some(season),
             episodes: vec![episode],
         };
@@ -196,6 +208,7 @@ pub fn parse(path: &Path) -> ParsedName {
     ParsedName {
         title,
         year,
+        tmdb_id,
         season: None,
         episodes: vec![],
     }
@@ -205,6 +218,13 @@ pub fn parse(path: &Path) -> ParsedName {
 
 fn extract_year(s: &str) -> Option<u16> {
     RE_YEAR
+        .captures(s)
+        .and_then(|c| c.get(1))
+        .and_then(|m| m.as_str().parse().ok())
+}
+
+fn extract_tmdb_id(s: &str) -> Option<u64> {
+    RE_TMDB_ID
         .captures(s)
         .and_then(|c| c.get(1))
         .and_then(|m| m.as_str().parse().ok())
@@ -224,8 +244,7 @@ fn pre_clean(s: &str) -> String {
 
 /// Replace dots/underscores with spaces and trim.
 fn clean_title(raw: &str) -> String {
-    raw
-        .replace(['.', '_', '/'], " ")
+    raw.replace(['.', '_', '/'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -270,38 +289,44 @@ mod tests {
         parse(Path::new(s))
     }
 
-
     #[test]
     fn should_parse_episodes_with_extra_info() {
-        let r = p("Obi-Wan Kenobi (2022) S01 (1080p BluRay x265 10bit EAC3 Atmos 7.1 Ghost)/Obi-Wan Kenobi (2022) - S01E06 - Part VI (1080p BluRay x265 Ghost).mkv");
+        let r = p(
+            "Obi-Wan Kenobi (2022) S01 (1080p BluRay x265 10bit EAC3 Atmos 7.1 Ghost)/Obi-Wan Kenobi (2022) - S01E06 - Part VI (1080p BluRay x265 Ghost).mkv",
+        );
         assert_eq!(r.title, "Obi-Wan Kenobi");
         assert_eq!(r.year, Some(2022));
-        assert_eq!(r.season, Some(1));        
+        assert_eq!(r.season, Some(1));
         assert_eq!(r.episodes, vec![6]);
     }
 
     #[test]
     fn should_parse_the_boys_s1_episode() {
-        let r = p("The Boys (2019) BDRip-AVC [UKR_ENG] [Hurtom]/Season 01/S01E01. The Boys (2019) BDRip-AVC [2xUKR_ENG] [Hurtom].mkv");
+        let r = p(
+            "The Boys (2019) BDRip-AVC [UKR_ENG] [Hurtom]/Season 01/S01E01. The Boys (2019) BDRip-AVC [2xUKR_ENG] [Hurtom].mkv",
+        );
         assert_eq!(r.title, "The Boys");
         assert_eq!(r.year, Some(2019));
-        assert_eq!(r.season, Some(1));        
+        assert_eq!(r.season, Some(1));
         assert_eq!(r.episodes, vec![1]);
     }
 
-
     #[test]
     fn should_parse_the_boys_s2_episode() {
-        let r = p("The Boys (2019) BDRip-AVC [UKR_ENG] [Hurtom]/Season 02/S02E02. The Boys (2020) BDRip-AVC [2xUKR_ENG] [Hurtom].mkv");
+        let r = p(
+            "The Boys (2019) BDRip-AVC [UKR_ENG] [Hurtom]/Season 02/S02E02. The Boys (2020) BDRip-AVC [2xUKR_ENG] [Hurtom].mkv",
+        );
         assert_eq!(r.title, "The Boys");
         assert_eq!(r.year, Some(2019));
-        assert_eq!(r.season, Some(2));        
+        assert_eq!(r.season, Some(2));
         assert_eq!(r.episodes, vec![2]);
     }
 
     #[test]
     fn should_parse_margo_episode() {
-        let r = p("Margos.Got.Money.Troubles.S01.2026.ATVP.WEB-DL.1080p/Margos.Got.Money.Troubles.S01E01.2026.ATVP.WEB-DL.1080p.mkv");
+        let r = p(
+            "Margos.Got.Money.Troubles.S01.2026.ATVP.WEB-DL.1080p/Margos.Got.Money.Troubles.S01E01.2026.ATVP.WEB-DL.1080p.mkv",
+        );
         assert_eq!(r.title, "Margos Got Money Troubles");
         assert_eq!(r.year, Some(2026));
         assert_eq!(r.season, Some(1));
@@ -316,12 +341,21 @@ mod tests {
         assert_eq!(r.season, None);
     }
 
-
     #[test]
     fn should_parse_a_movie_in_the_root_with_tmdbid() {
         let r = p("Good Bye, Lenin! (2003) [tmdbid-338].mkv");
         assert_eq!(r.title, "Good Bye, Lenin!");
         assert_eq!(r.year, Some(2003));
+        assert_eq!(r.tmdb_id, Some(338));
+        assert_eq!(r.season, None);
+    }
+
+    #[test]
+    fn should_parse_tmdb_id_from_generated_folder_name() {
+        let r = p("Good Bye, Lenin! (2003) [tmdb-338]/Good Bye, Lenin!.mkv");
+        assert_eq!(r.title, "Good Bye, Lenin!");
+        assert_eq!(r.year, Some(2003));
+        assert_eq!(r.tmdb_id, Some(338));
         assert_eq!(r.season, None);
     }
 

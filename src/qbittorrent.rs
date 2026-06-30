@@ -1,10 +1,10 @@
 use crate::config::QBittorrentConfig;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::{
-    header::{CONTENT_TYPE, COOKIE, SET_COOKIE},
     StatusCode,
+    header::{CONTENT_TYPE, COOKIE, SET_COOKIE},
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -50,8 +50,12 @@ impl QBittorrentClient {
         self.login().await
     }
 
-    pub async fn add_magnet(&self, magnet_uri: &str) -> Result<Vec<TorrentTask>> {
-        self.add_magnet_once(magnet_uri, true).await
+    pub async fn add_magnet_with_name(
+        &self,
+        magnet_uri: &str,
+        download_name: Option<&str>,
+    ) -> Result<Vec<TorrentTask>> {
+        self.add_magnet_once(magnet_uri, download_name, true).await
     }
 
     pub async fn list(&self, id: Option<&str>) -> Result<Vec<TorrentTask>> {
@@ -77,7 +81,10 @@ impl QBittorrentClient {
         let sid_cookie = sid_cookie_from_response(&response);
         let body = response.text().await.unwrap_or_default();
 
-        info!("qBittorrent login cookie: {}", sid_cookie.as_deref().unwrap_or("none"));
+        info!(
+            "qBittorrent login cookie: {}",
+            sid_cookie.as_deref().unwrap_or("none")
+        );
 
         if !status.is_success() || sid_cookie.is_none() {
             warn!(
@@ -97,13 +104,25 @@ impl QBittorrentClient {
         Ok(())
     }
 
-    async fn add_magnet_once(&self, magnet_uri: &str, can_retry: bool) -> Result<Vec<TorrentTask>> {
+    async fn add_magnet_once(
+        &self,
+        magnet_uri: &str,
+        download_name: Option<&str>,
+        can_retry: bool,
+    ) -> Result<Vec<TorrentTask>> {
         let sid_cookie = self.sid_cookie().await?;
+        let mut form = reqwest::multipart::Form::new().text("urls", magnet_uri.to_string());
+        if let Some(name) = download_name.map(str::trim).filter(|name| !name.is_empty()) {
+            form = form
+                .text("rename", name.to_string())
+                .text("contentLayout", "Subfolder");
+        }
+
         let response = self
             .http
             .post(self.url("/api/v2/torrents/add"))
             .header(COOKIE, sid_cookie)
-            .multipart(reqwest::multipart::Form::new().text("urls", magnet_uri.to_string()))
+            .multipart(form)
             .send()
             .await
             .context("send qBittorrent add request")?;
@@ -111,7 +130,7 @@ impl QBittorrentClient {
         if response.status() == StatusCode::FORBIDDEN && can_retry {
             self.clear_sid().await;
             self.login().await?;
-            return Box::pin(self.add_magnet_once(magnet_uri, false)).await;
+            return Box::pin(self.add_magnet_once(magnet_uri, download_name, false)).await;
         }
 
         let status = response.status();
@@ -120,7 +139,12 @@ impl QBittorrentClient {
             bail!("qBittorrent add failed ({status}): {}", body.trim());
         }
 
-        info!("Downloading magnet link: {magnet_uri}");
+        info!(
+            "Downloading magnet link: {magnet_uri}{}",
+            download_name
+                .map(|name| format!(" as {name}"))
+                .unwrap_or_default()
+        );
         self.list(None).await
     }
 
@@ -193,10 +217,14 @@ impl QBittorrentClient {
 }
 
 fn sid_cookie_from_response(response: &reqwest::Response) -> Option<String> {
-    response.headers().get_all(SET_COOKIE).iter().find_map(|value| {
-        let value = value.to_str().ok()?;
-        SID_COOKIE_RE.find(value).map(|m| m.as_str().to_string())
-    })
+    response
+        .headers()
+        .get_all(SET_COOKIE)
+        .iter()
+        .find_map(|value| {
+            let value = value.to_str().ok()?;
+            SID_COOKIE_RE.find(value).map(|m| m.as_str().to_string())
+        })
 }
 
 fn urlencoding(s: &str) -> String {

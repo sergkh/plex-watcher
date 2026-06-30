@@ -1,6 +1,6 @@
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 pub async fn notify_plex(
     plex_url: &str,
@@ -26,21 +26,34 @@ pub async fn notify_plex(
 
 async fn refresh_all(url: &str, token: &str, client: &reqwest::Client) -> anyhow::Result<()> {
     #[derive(serde::Deserialize)]
-    struct Dir { key: String, title: String }
+    struct Dir {
+        key: String,
+        title: String,
+    }
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "PascalCase")]
-    struct MC { directory: Vec<Dir> }
+    struct MC {
+        directory: Vec<Dir>,
+    }
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "PascalCase")]
-    struct Root { media_container: MC }
+    struct Root {
+        media_container: MC,
+    }
 
     let resp: Root = client
         .get(format!("{url}/library/sections"))
         .header("X-Plex-Token", token)
         .header("Accept", "application/json")
-        .send().await?.json().await?;
+        .send()
+        .await?
+        .json()
+        .await?;
 
-    let ids: Vec<String> = resp.media_container.directory.iter()
+    let ids: Vec<String> = resp
+        .media_container
+        .directory
+        .iter()
         .inspect(|d| info!("Found section {} ({})", d.key, d.title))
         .map(|d| d.key.clone())
         .collect();
@@ -55,7 +68,13 @@ async fn refresh_ids(
     client: &reqwest::Client,
 ) -> anyhow::Result<()> {
     for id in ids {
-        fetch_with_retry(client, &format!("{url}/library/sections/{id}/refresh"), token, 3).await?;
+        fetch_with_retry(
+            client,
+            &format!("{url}/library/sections/{id}/refresh"),
+            token,
+            3,
+        )
+        .await?;
         info!("Plex section {id} refresh triggered");
     }
     Ok(())

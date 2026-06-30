@@ -10,7 +10,9 @@ mod tmdb;
 mod web;
 
 use anyhow::{Context, Result};
-use notify::{Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -19,10 +21,10 @@ use std::{
 };
 use tokio::{
     sync::mpsc,
-    time::{sleep, Instant},
+    time::{Instant, sleep},
 };
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 use config::{AppConfig, CONFIG_HELP};
 use processor::{create_link, process_file, process_folder, remove_hardlinks_pointing_to};
@@ -52,7 +54,6 @@ fn should_ignore(path: &Path, watch_dir: &Path, ignored_dirs: &[String]) -> bool
     false
 }
 
-
 // ---------------------------------------------------------------------------
 // Startup validation
 // ---------------------------------------------------------------------------
@@ -62,8 +63,7 @@ fn validate_hardlink_permissions(watch_dir: &Path, plex_dir: &Path) -> Result<()
         .with_context(|| format!("create plex directory {}", plex_dir.display()))?;
 
     let test_src = watch_dir.join(".media_sync_test_src");
-    std::fs::write(&test_src, "test")
-        .context("create test source file in watch directory")?;
+    std::fs::write(&test_src, "test").context("create test source file in watch directory")?;
 
     let mut use_copy = false;
 
@@ -77,18 +77,23 @@ fn validate_hardlink_permissions(watch_dir: &Path, plex_dir: &Path) -> Result<()
         match std::fs::hard_link(&test_src, &test_link) {
             Ok(()) => debug!("Hardlink test succeeded in {}", dir.display()),
             Err(e) if e.raw_os_error() == Some(18) => {
-                info!("Hardlinks not supported across {} and {} - will use copy instead",
-                      watch_dir.display(), dir.display());
+                info!(
+                    "Hardlinks not supported across {} and {} - will use copy instead",
+                    watch_dir.display(),
+                    dir.display()
+                );
                 use_copy = true;
                 let _ = std::fs::copy(&test_src, &test_link);
             }
             Err(e) => {
                 let _ = std::fs::remove_file(&test_src);
                 let _ = std::fs::remove_file(&test_link);
-                return Err(e).with_context(|| format!(
-                    "cannot create links in {} - check permissions",
-                    dir.display()
-                ));
+                return Err(e).with_context(|| {
+                    format!(
+                        "cannot create links in {} - check permissions",
+                        dir.display()
+                    )
+                });
             }
         }
         let _ = std::fs::remove_file(&test_link);
@@ -141,11 +146,19 @@ async fn main() -> Result<()> {
     info!("Plex dir:  {}", cfg.plex_dir.display());
     info!("Plex URL:  {}", cfg.plex_url);
     info!("Debounce:  {}ms", cfg.debounce_ms);
-    info!("Polling:   {}", if cfg.enable_polling { "enabled" } else { "disabled" });
+    info!(
+        "Polling:   {}",
+        if cfg.enable_polling {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     info!("Ignored:   {:?}", cfg.ignored_dirs);
     info!("Web UI:    http://{}", cfg.web_addr);
 
-    validate_hardlink_permissions(&cfg.watch_dir, &cfg.plex_dir).context("validate hardlink permissions")?;
+    validate_hardlink_permissions(&cfg.watch_dir, &cfg.plex_dir)
+        .context("validate hardlink permissions")?;
     info!("Hardlink permissions validated");
 
     let http = reqwest::Client::builder()
@@ -170,7 +183,7 @@ async fn main() -> Result<()> {
         let (notify_tx, notify_rx) = std::sync::mpsc::channel::<Result<Event, notify::Error>>();
         let mut watcher = RecommendedWatcher::new(notify_tx, NotifyConfig::default())?;
         watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
-        
+
         info!("Watcher started. Waiting for files...");
 
         std::thread::spawn(move || {
@@ -407,7 +420,12 @@ fn env_is_set(name: &str) -> bool {
 fn scan_initial_files(watch_dir: &Path, ignored_dirs: &[String]) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
-    fn walk(dir: &Path, watch_dir: &Path, ignored_dirs: &[String], files: &mut Vec<PathBuf>) -> Result<()> {
+    fn walk(
+        dir: &Path,
+        watch_dir: &Path,
+        ignored_dirs: &[String],
+        files: &mut Vec<PathBuf>,
+    ) -> Result<()> {
         for entry in std::fs::read_dir(dir)?.flatten() {
             let path = entry.path();
             if path.is_dir() {

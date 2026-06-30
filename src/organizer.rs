@@ -4,8 +4,8 @@
 //!   Movies:   {plex_dir}/Movies/{Title} ({Year})/{original_filename}
 //!   Episodes: {plex_dir}/TV Shows/{Show} ({Year})/Season {N}/{original_filename}
 
-use std::path::{Path, PathBuf};
 use crate::tmdb::MediaInfo;
+use std::path::{Path, PathBuf};
 
 /// Given the TMDB lookup result and the original source path, return the
 /// full symlink destination path inside `plex_root`.
@@ -16,13 +16,15 @@ pub fn build_plex_path(plex_root: &Path, info: &MediaInfo, src: &Path) -> PathBu
         MediaInfo::Movie { title, year, .. } => {
             // Movies/Dune Part Two (2024)/Dune.Part.Two.2024.2160p.mkv
             let folder = sanitize(&format!("{} ({})", title, year));
-            plex_root
-                .join("Movies")
-                .join(&folder)
-                .join(filename)
+            plex_root.join("Movies").join(&folder).join(filename)
         }
 
-        MediaInfo::Episode { show_title, show_year, season, .. } => {
+        MediaInfo::Episode {
+            show_title,
+            show_year,
+            season,
+            ..
+        } => {
             // TV Shows/Breaking Bad (2008)/Season 03/Breaking.Bad.S03E07.mkv
             let show_folder = sanitize(&format!("{} ({})", show_title, show_year));
             let season_folder = format!("Season {:02}", season);
