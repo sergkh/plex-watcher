@@ -81,11 +81,6 @@ impl QBittorrentClient {
         let sid_cookie = sid_cookie_from_response(&response);
         let body = response.text().await.unwrap_or_default();
 
-        info!(
-            "qBittorrent login cookie: {}",
-            sid_cookie.as_deref().unwrap_or("none")
-        );
-
         if !status.is_success() || sid_cookie.is_none() {
             warn!(
                 "Failed to log in to qBittorrent. Status: {}, Result: {}, sid match: {}",
