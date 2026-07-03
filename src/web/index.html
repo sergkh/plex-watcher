@@ -7,25 +7,33 @@
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #f6f7f9;
-      --fg: #1f252e;
-      --muted: #667085;
-      --line: #d0d5dd;
+      --bg: #f4f8fc;
+      --fg: #172033;
+      --muted: #64748b;
+      --line: #d8e2ee;
       --panel: #ffffff;
-      --accent: #c98900;
-      --accent-fg: #1b1400;
+      --panel-soft: #f8fbff;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --accent-soft: #e8f0ff;
+      --accent-fg: #ffffff;
       --danger: #b42318;
+      --shadow: 0 8px 24px rgba(37, 99, 235, 0.08);
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #101418;
-        --fg: #eef2f6;
-        --muted: #a9b3c1;
-        --line: #303946;
-        --panel: #171d24;
-        --accent: #f0b43c;
-        --accent-fg: #241800;
+        --bg: #0d1117;
+        --fg: #edf4ff;
+        --muted: #94a3b8;
+        --line: #263244;
+        --panel: #141b24;
+        --panel-soft: #111827;
+        --accent: #60a5fa;
+        --accent-hover: #93c5fd;
+        --accent-soft: #13243b;
+        --accent-fg: #06101f;
         --danger: #ffb4ab;
+        --shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
       }
     }
     * { box-sizing: border-box; }
@@ -69,9 +77,9 @@
     }
     .nav-button:hover,
     .nav-button:focus-visible {
-      border-color: var(--line);
-      background: var(--panel);
-      color: var(--fg);
+      border-color: color-mix(in srgb, var(--accent), transparent 55%);
+      background: var(--accent-soft);
+      color: var(--accent);
     }
     .nav-button svg {
       width: 18px;
@@ -112,7 +120,7 @@
     }
     input:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent), transparent 75%);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent), transparent 78%);
     }
     button {
       min-height: 46px;
@@ -124,6 +132,10 @@
       font: inherit;
       font-weight: 700;
       cursor: pointer;
+    }
+    button:not(.nav-button):not(.icon-button):hover:not(:disabled),
+    button:not(.nav-button):not(.icon-button):focus-visible:not(:disabled) {
+      background: var(--accent-hover);
     }
     button:disabled {
       cursor: wait;
@@ -172,9 +184,9 @@
     }
     .icon-button:hover,
     .icon-button:focus-visible {
-      border-color: var(--line);
-      background: var(--panel);
-      color: var(--fg);
+      border-color: color-mix(in srgb, var(--accent), transparent 55%);
+      background: var(--accent-soft);
+      color: var(--accent);
     }
     .icon-button svg {
       width: 18px;
@@ -197,6 +209,7 @@
       border-radius: 8px;
       background: var(--panel);
       padding: 10px 12px;
+      box-shadow: var(--shadow);
     }
     .torrent strong {
       min-width: 0;
@@ -208,10 +221,38 @@
       font-size: 13px;
       overflow-wrap: anywhere;
     }
+    .torrent-error {
+      grid-column: 1 / -1;
+      color: var(--danger);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
     .torrent button {
       min-height: 34px;
       padding: 0 12px;
       font-size: 14px;
+    }
+    .torrent-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .checkbox-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .checkbox-label input {
+      width: 16px;
+      min-height: 16px;
+      height: 16px;
+      margin: 0;
+      padding: 0;
+      accent-color: var(--accent);
     }
     .watch-list {
       display: grid;
@@ -224,6 +265,9 @@
       align-items: center;
       border-bottom: 1px solid var(--line);
       padding: 7px 0;
+    }
+    .watch-entry:hover {
+      background: color-mix(in srgb, var(--accent-soft), transparent 55%);
     }
     .watch-entry strong {
       min-width: 0;
@@ -257,16 +301,41 @@
     .log-entry .message {
       color: var(--fg);
     }
-    .actions {
+    .result-footer {
       display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
       align-items: center;
+      justify-content: flex-end;
+      margin-top: auto;
     }
-    .actions button {
-      min-height: 34px;
-      padding: 0 12px;
-      font-size: 14px;
+    .torrent-toggle {
+      width: 32px;
+      min-height: 32px;
+      flex: 0 0 auto;
+      border: 1px solid var(--line);
+      background: var(--panel-soft);
+      color: var(--muted);
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+    }
+    .torrent-toggle:hover:not(:disabled),
+    .torrent-toggle:focus-visible:not(:disabled) {
+      border-color: color-mix(in srgb, var(--accent), transparent 45%);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .torrent-toggle svg {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+      transition: transform 160ms ease;
+    }
+    .torrent-toggle.open svg {
+      transform: rotate(180deg);
     }
     .result-links {
       display: flex;
@@ -285,7 +354,8 @@
     }
     .result-links a:hover {
       border-color: var(--accent);
-      color: var(--fg);
+      background: var(--accent-soft);
+      color: var(--accent);
       text-decoration: none;
     }
     .inline-torrents {
@@ -309,6 +379,7 @@
       border-radius: 8px;
       background: var(--panel);
       padding: 12px;
+      box-shadow: var(--shadow);
     }
     .poster {
       width: 150px;
@@ -326,6 +397,8 @@
       padding: 8px;
     }
     .result-body {
+      display: flex;
+      flex-direction: column;
       min-width: 0;
     }
     h2 {
@@ -356,6 +429,7 @@
     .detail {
       border: 1px solid var(--line);
       border-radius: 8px;
+      background: var(--panel-soft);
       padding: 7px 8px;
     }
     .detail-label {
@@ -510,8 +584,12 @@
               </div>
               
               <p x-text="item.overview || 'No overview available.'"></p>
-              <div class="actions">
-                <button type="button" :disabled="item.torrentLoading" @click="toggleProwlarr(item)" x-text="torrentButtonText(item)"></button>
+              <div class="result-footer">
+                <button class="torrent-toggle" type="button" :class="{ open: item.torrentOpen }" :disabled="item.torrentLoading" @click="toggleProwlarr(item)" :aria-label="torrentToggleLabel(item)" :title="torrentToggleLabel(item)">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m6 9 6 6 6-6"></path>
+                  </svg>
+                </button>
               </div>
 
             </div>
@@ -522,8 +600,17 @@
                 <template x-for="result in item.torrentResults" :key="result.magnet_uri || result.title">
                   <div class="torrent">
                     <strong x-text="result.title"></strong>
-                    <button type="button" :disabled="result.adding" @click="addTorrentSource(result.magnet_uri, result, item)" x-text="result.adding ? 'Adding...' : 'Download'"></button>
+                    <div class="torrent-actions">
+                      <!--label class="checkbox-label">
+                        <input type="checkbox" x-model="result.autoupdate" :disabled="result.adding || result.downloaded">
+                        <span>autoupdate</span>
+                      </label -->
+                      <button type="button" :disabled="result.adding || result.downloaded" @click="addTorrentSource(result.magnet_uri, result, item)" x-text="torrentDownloadButtonText(result)"></button>
+                    </div>
                     <span class="meta" x-text="`${result.seeders} seeders · ${result.leechers} leechers · ${result.size}`"></span>
+                    <template x-if="result.addError">
+                      <div class="torrent-error" x-text="result.addError"></div>
+                    </template>
                     <div class="path" x-text="result.indexer"></div>
                   </div>
                 </template>
@@ -724,10 +811,16 @@
           ];
         },
 
-        torrentButtonText(item) {
-          if (item.torrentLoading) return "Searching...";
+        torrentToggleLabel(item) {
+          if (item.torrentLoading) return "Searching torrents";
           if (item.torrentOpen) return "Close torrents";
           return item.torrentLoaded ? "Open torrents" : "Search torrents";
+        },
+
+        torrentDownloadButtonText(result) {
+          if (result.adding) return "Adding...";
+          if (result.downloaded) return "Downloading";
+          return "Download";
         },
 
         async toggleProwlarr(item) {
@@ -757,7 +850,13 @@
             if (!response.ok) throw new Error(await response.text());
 
             const results = await response.json();
-            item.torrentResults = results.map((result) => ({ ...result, adding: false }));
+            item.torrentResults = results.map((result) => ({
+              ...result,
+              adding: false,
+              downloaded: false,
+              addError: "",
+              autoupdate: false,
+            }));
             item.torrentLoaded = true;
             item.torrentStatus = results.length
               ? `${results.length} torrent result${results.length === 1 ? "" : "s"}`
@@ -934,15 +1033,14 @@
         },
 
         async addTorrentSource(value, result, item) {
-          this.torrentStatusError = false;
+          result.addError = "";
 
           if (!value) {
-            this.torrentStatus = "Missing torrent download URL.";
+            result.addError = "Missing torrent download URL.";
             return;
           }
 
           result.adding = true;
-          this.torrentStatus = "Adding torrent...";
 
           try {
             const response = await fetch("/api/torrents/add", {
@@ -953,17 +1051,15 @@
                 tmdb_title: item?.title,
                 tmdb_id: item?.tmdb_id,
                 tmdb_year: item?.year,
+                autoupdate: Boolean(result?.autoupdate),
               }),
             });
             if (!response.ok) throw new Error(await response.text());
 
             this.torrents = await response.json();
-            this.torrentStatus = this.torrents.length
-              ? `${this.torrents.length} download${this.torrents.length === 1 ? "" : "s"}`
-              : "No active downloads.";
+            result.downloaded = true;
           } catch (error) {
-            this.torrentStatusError = true;
-            this.torrentStatus = error.message || "Add failed.";
+            result.addError = error.message || "Add failed.";
           } finally {
             result.adding = false;
           }

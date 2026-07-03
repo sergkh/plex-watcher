@@ -29,3 +29,5 @@ touch ./dev/watch/Margos.Got.Money.Troubles.S01.2026.ATVP.WEB-DL.1080p/Margos.Go
 touch ./dev/watch/Margos.Got.Money.Troubles.S01.2026.ATVP.WEB-DL.1080p/Margos.Got.Money.Troubles.S01E04.2026.ATVP.WEB-DL.1080p.mkv
 touch ./dev/watch/Margos.Got.Money.Troubles.S01.2026.ATVP.WEB-DL.1080p/Margos.Got.Money.Troubles.S01E05.2026.ATVP.WEB-DL.1080p.mkv
 
+mkdir ./dev/watch/Silo.S03E01.1080p.WEB.h264-ETHEL[EZTVx.to]
+touch ./dev/watch/Silo.S03E01.1080p.WEB.h264-ETHEL[EZTVx.to]/Silo.S03E01.1080p.WEB.h264-ETHEL[EZTVx.to].mkv

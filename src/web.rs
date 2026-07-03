@@ -39,6 +39,7 @@ struct AddTorrentInput {
     tmdb_title: Option<String>,
     tmdb_id: Option<u64>,
     tmdb_year: Option<u16>,
+    autoupdate: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -174,8 +175,26 @@ async fn add_torrent(
     }
 
     let download_name = tmdb_download_name(&input);
+    let save_path = download_name.as_ref().map(|name| {
+        state
+            .cfg
+            .watch_dir
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    });
+    let tags = if input.autoupdate.unwrap_or(false) {
+        vec!["autoupdate"]
+    } else {
+        Vec::new()
+    };
     let results = client
-        .add_magnet_with_name(source, download_name.as_deref())
+        .add_magnet_with_name(
+            source,
+            download_name.as_deref(),
+            save_path.as_deref(),
+            &tags,
+        )
         .await?;
     Ok(Json(results))
 }

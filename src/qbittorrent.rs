@@ -54,8 +54,15 @@ impl QBittorrentClient {
         &self,
         magnet_uri: &str,
         download_name: Option<&str>,
+        save_path: Option<&str>,
+        tags: &[&str],
     ) -> Result<Vec<TorrentTask>> {
-        self.add_magnet_once(magnet_uri, download_name, true).await
+        if !tags.is_empty() {
+            self.create_tags(tags).await?;
+        }
+
+        self.add_magnet_once(magnet_uri, download_name, save_path, tags, true)
+            .await
     }
 
     pub async fn list(&self, id: Option<&str>) -> Result<Vec<TorrentTask>> {
@@ -103,14 +110,22 @@ impl QBittorrentClient {
         &self,
         magnet_uri: &str,
         download_name: Option<&str>,
+        save_path: Option<&str>,
+        tags: &[&str],
         can_retry: bool,
     ) -> Result<Vec<TorrentTask>> {
         let sid_cookie = self.sid_cookie().await?;
         let mut form = reqwest::multipart::Form::new().text("urls", magnet_uri.to_string());
+        if let Some(path) = save_path.map(str::trim).filter(|path| !path.is_empty()) {
+            form = form.text("savepath", path.to_string());
+        }
         if let Some(name) = download_name.map(str::trim).filter(|name| !name.is_empty()) {
             form = form
                 .text("rename", name.to_string())
                 .text("contentLayout", "Subfolder");
+        }
+        if !tags.is_empty() {
+            form = form.text("tags", tags.join(","));
         }
 
         let response = self
@@ -125,7 +140,14 @@ impl QBittorrentClient {
         if response.status() == StatusCode::FORBIDDEN && can_retry {
             self.clear_sid().await;
             self.login().await?;
-            return Box::pin(self.add_magnet_once(magnet_uri, download_name, false)).await;
+            return Box::pin(self.add_magnet_once(
+                magnet_uri,
+                download_name,
+                save_path,
+                tags,
+                false,
+            ))
+            .await;
         }
 
         let status = response.status();
@@ -141,6 +163,40 @@ impl QBittorrentClient {
                 .unwrap_or_default()
         );
         self.list(None).await
+    }
+
+    async fn create_tags(&self, tags: &[&str]) -> Result<()> {
+        self.create_tags_once(tags, true).await
+    }
+
+    async fn create_tags_once(&self, tags: &[&str], can_retry: bool) -> Result<()> {
+        let sid_cookie = self.sid_cookie().await?;
+        let response = self
+            .http
+            .post(self.url("/api/v2/torrents/createTags"))
+            .header(COOKIE, sid_cookie)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(format!("tags={}", urlencoding(&tags.join(","))))
+            .send()
+            .await
+            .context("send qBittorrent create tags request")?;
+
+        if response.status() == StatusCode::FORBIDDEN && can_retry {
+            self.clear_sid().await;
+            self.login().await?;
+            return Box::pin(self.create_tags_once(tags, false)).await;
+        }
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            bail!(
+                "qBittorrent tag creation failed ({status}): {}",
+                body.trim()
+            );
+        }
+
+        Ok(())
     }
 
     async fn list_once(&self, id: Option<&str>, can_retry: bool) -> Result<Vec<TorrentTask>> {

@@ -242,6 +242,20 @@ fn pre_clean(s: &str) -> String {
         .to_string()
 }
 
+fn title_part_around_episode_marker(s: &str) -> &str {
+    if let Some(caps) = RE_SXX_EXX.captures(s).or_else(|| RE_1X03.captures(s)) {
+        let marker = caps.get(0).unwrap();
+        if marker.start() == 0 {
+            return s[marker.end()..]
+                .trim_start_matches(|c: char| c == '.' || c == ' ' || c == '_' || c == '-');
+        }
+
+        return &s[..marker.start()];
+    }
+
+    s
+}
+
 /// Replace dots/underscores with spaces and trim.
 fn clean_title(raw: &str) -> String {
     raw.replace(['.', '_', '/'], " ")
@@ -261,13 +275,14 @@ fn extract_from_first_folder(path: &Path) -> Option<(String, Option<u16>)> {
 
     let cleaned = pre_clean(first_folder);
     let year = extract_year(&cleaned).or_else(|| extract_year(first_folder));
+    let title_part = title_part_around_episode_marker(&cleaned);
     let title_without_year = if let Some(y) = year {
-        cleaned
+        title_part
             .replace(&format!("({})", y), "")
             .replace(&format!(".{}", y), "")
             .replace(&format!(" {}", y), "")
     } else {
-        cleaned
+        title_part.to_string()
     };
 
     let title = clean_title(&title_without_year);
@@ -330,6 +345,17 @@ mod tests {
         assert_eq!(r.title, "Margos Got Money Troubles");
         assert_eq!(r.year, Some(2026));
         assert_eq!(r.season, Some(1));
+        assert_eq!(r.episodes, vec![1]);
+    }
+
+    #[test]
+    fn should_parse_eztv_style_episode_folder() {
+        let r = p(
+            "Silo.S03E01.1080p.WEB.h264-ETHEL[EZTVx.to]/Silo.S03E01.1080p.WEB.h264-ETHEL[EZTVx.to].mkv",
+        );
+        assert_eq!(r.title, "Silo");
+        assert_eq!(r.year, None);
+        assert_eq!(r.season, Some(3));
         assert_eq!(r.episodes, vec![1]);
     }
 
