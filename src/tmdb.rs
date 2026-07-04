@@ -31,6 +31,7 @@ pub struct MediaSearchResult {
     pub media_type: String,
     pub title: String,
     pub year: Option<u16>,
+    pub season_count: Option<u16>,
     pub tmdb_id: u64,
     pub tmdb_url: String,
     pub imdb_id: Option<String>,
@@ -87,6 +88,11 @@ struct MultiResult {
 #[derive(Deserialize)]
 struct ExternalIdsResp {
     imdb_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TvDetailsResp {
+    number_of_seasons: Option<u16>,
 }
 
 // ── public API ────────────────────────────────────────────────────────────────
@@ -171,6 +177,11 @@ pub async fn search_media(
             .poster_path
             .as_ref()
             .map(|path| format!("https://image.tmdb.org/t/p/w342{path}"));
+        let season_count = if hit.media_type == "tv" {
+            tv_season_count_for_id(client, api_key, hit.id).await.ok().flatten()
+        } else {
+            None
+        };
         let imdb_id = imdb_id_for_media(client, api_key, &hit.media_type, hit.id)
             .await
             .ok()
@@ -192,6 +203,7 @@ pub async fn search_media(
             media_type: hit.media_type,
             title,
             year,
+            season_count,
             tmdb_id: hit.id,
             tmdb_url,
             imdb_id,
@@ -406,6 +418,29 @@ async fn imdb_id_for_media(
         .context("parse TMDB movie external IDs response")?;
 
     Ok(resp.imdb_id.filter(|id| !id.is_empty()))
+}
+
+async fn tv_season_count_for_id(
+    client: &reqwest::Client,
+    api_key: &str,
+    tmdb_id: u64,
+) -> Result<Option<u16>> {
+    let url = format!("{BASE}/tv/{tmdb_id}?api_key={api_key}&language=en-US");
+    let response = client.get(&url).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        let details = response.text().await.unwrap_or_default();
+        bail!(
+            "TMDB TV details failed ({status}) for id={tmdb_id}: {}",
+            details.trim()
+        );
+    }
+
+    let details: TvDetailsResp = response
+        .json()
+        .await
+        .context("parse TMDB TV details response")?;
+    Ok(details.number_of_seasons.filter(|count| *count > 0))
 }
 
 fn urlencoding(s: &str) -> String {

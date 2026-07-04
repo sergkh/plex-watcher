@@ -370,6 +370,44 @@
     .inline-torrents .status {
       margin-bottom: 8px;
     }
+    .inline-controls {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .season-controls,
+    .manual-query-row {
+      display: grid;
+      grid-template-columns: auto minmax(120px, 170px);
+      gap: 8px;
+      align-items: center;
+    }
+    .manual-query-row {
+      grid-template-columns: 1fr auto;
+    }
+    .season-controls label,
+    .manual-query-row label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .season-controls select {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--fg);
+      padding: 0 10px;
+      font: inherit;
+    }
+    .manual-query-row button {
+      min-height: 34px;
+      font-size: 14px;
+      padding: 0 12px;
+    }
+    .manual-query-row input {
+      min-height: 34px;
+    }
     article {
       display: grid;
       grid-template-columns: 150px 1fr;
@@ -485,6 +523,10 @@
       .watch-entry {
         grid-template-columns: 1fr;
       }
+      .season-controls,
+      .manual-query-row {
+        grid-template-columns: 1fr;
+      }
       .watch-entry span {
         white-space: normal;
       }
@@ -595,7 +637,29 @@
             </div>
 
             <div class="inline-torrents" :class="{ open: item.torrentOpen }">
+              <div class="inline-controls">
+                <template x-if="item.media_type === 'tv'">
+                  <div class="season-controls">
+                    <label :for="`season-${item.media_type}-${item.tmdb_id}`">Season</label>
+                    <select x-model.number="item.selectedSeason" :id="`season-${item.media_type}-${item.tmdb_id}`" :disabled="item.torrentLoading" @change="onSeasonChange(item)">
+                      <template x-for="season in seasonOptionCount(item)" :key="season">
+                        <option :value="season" x-text="`Season ${season}`"></option>
+                      </template>
+                    </select>
+                  </div>
+                </template>
+              </div>
               <div class="status" :class="{ error: item.torrentStatusError }" x-text="item.torrentStatus"></div>
+              <template x-if="item.torrentLoaded && !item.torrentStatusError && !item.torrentLoading && item.torrentResults.length === 0">
+                <div class="manual-query-row">
+                  <input
+                    x-model="item.manualTorrentQuery"
+                    type="search"
+                    :placeholder="item.lastTorrentQuery ? `Try a different term than: ${item.lastTorrentQuery}` : 'Enter a search term'"
+                    @keydown.enter.prevent="searchProwlarrForItem(item, item.manualTorrentQuery)">
+                  <button type="button" :disabled="item.torrentLoading" @click="searchProwlarrForItem(item, item.manualTorrentQuery)">Search term</button>
+                </div>
+              </template>
               <div class="torrent-list">
                 <template x-for="result in item.torrentResults" :key="result.magnet_uri || result.title">
                   <div class="torrent">
@@ -748,6 +812,10 @@
               torrentStatus: "",
               torrentStatusError: false,
               torrentResults: [],
+              seasonCount: item.season_count,
+              selectedSeason: 1,
+              manualTorrentQuery: "",
+              lastTorrentQuery: "",
             }));
 
             this.searchStatus = items.length
@@ -823,6 +891,17 @@
           return "Download";
         },
 
+        seasonOptionCount(item) {
+          const count = Number(item.seasonCount);
+          if (Number.isFinite(count) && count > 0) return Math.floor(count);
+          return 40;
+        },
+
+        async onSeasonChange(item) {
+          if (item.media_type !== "tv" || item.torrentLoading) return;
+          await this.searchProwlarrForItem(item);
+        },
+
         async toggleProwlarr(item) {
           if (item.torrentOpen) {
             item.torrentOpen = false;
@@ -837,13 +916,26 @@
           await this.searchProwlarrForItem(item);
         },
 
-        async searchProwlarrForItem(item) {
-          const q = item.year && item.media_type === "movie" ? `${item.title} ${item.year}` : item.title;
+        buildProwlarrQuery(item, customQuery) {
+          const manual = (customQuery || "").trim();
+          if (manual) return manual;
+
+          if (item.media_type === "tv") {
+            const season = Math.max(1, Number(item.selectedSeason) || 1);
+            return `${item.title} S${String(season).padStart(2, "0")}`;
+          }
+
+          return item.year && item.media_type === "movie" ? `${item.title} ${item.year}` : item.title;
+        },
+
+        async searchProwlarrForItem(item, customQuery = "") {
+          const q = this.buildProwlarrQuery(item, customQuery);
           item.torrentOpen = true;
           item.torrentLoading = true;
           item.torrentStatusError = false;
           item.torrentStatus = `Searching torrents for ${q}...`;
           item.torrentResults = [];
+          item.lastTorrentQuery = q;
 
           try {
             const response = await fetch(`/api/prowlarr/search?q=${encodeURIComponent(q)}`);
@@ -861,6 +953,9 @@
             item.torrentStatus = results.length
               ? `${results.length} torrent result${results.length === 1 ? "" : "s"}`
               : "No torrent results found.";
+            if (results.length) {
+              item.manualTorrentQuery = "";
+            }
           } catch (error) {
             item.torrentStatusError = true;
             item.torrentStatus = error.message || "Torrent search failed.";
