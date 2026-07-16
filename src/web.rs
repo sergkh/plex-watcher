@@ -65,25 +65,23 @@ pub async fn serve(cfg: Arc<AppConfig>, http: reqwest::Client) -> Result<()> {
 
     let qbittorrent = if let Some(config) = cfg.qbittorrent.clone() {
         let client = Arc::new(qbittorrent::QBittorrentClient::new(config, http.clone()));
-        match client.validate_credentials().await {
-            Ok(()) => Some(client),
-            Err(e) => {
-                tracing::warn!("Disabling qBittorrent integration: {e:#}");
-                None
-            }
+        if let Err(e) = client.validate_credentials().await {
+            tracing::warn!(
+                "qBittorrent validation failed at startup; integration remains enabled: {e:#}"
+            );
         }
+        Some(client)
     } else {
         None
     };
     let prowlarr = if let Some(config) = cfg.prowlarr.clone() {
         let client = Arc::new(prowlarr::ProwlarrClient::new(config, http.clone()));
-        match client.validate_credentials().await {
-            Ok(()) => Some(client),
-            Err(e) => {
-                tracing::warn!("Disabling Prowlarr integration: {e:#}");
-                None
-            }
+        if let Err(e) = client.validate_credentials().await {
+            tracing::warn!(
+                "Prowlarr validation failed at startup; integration remains enabled: {e:#}"
+            );
         }
+        Some(client)
     } else {
         None
     };
