@@ -650,16 +650,14 @@
                 </template>
               </div>
               <div class="status" :class="{ error: item.torrentStatusError }" x-text="item.torrentStatus"></div>
-              <template x-if="item.torrentLoaded && !item.torrentStatusError && !item.torrentLoading && item.torrentResults.length === 0">
-                <div class="manual-query-row">
-                  <input
-                    x-model="item.manualTorrentQuery"
-                    type="search"
-                    :placeholder="item.lastTorrentQuery ? `Try a different term than: ${item.lastTorrentQuery}` : 'Enter a search term'"
-                    @keydown.enter.prevent="searchProwlarrForItem(item, item.manualTorrentQuery)">
-                  <button type="button" :disabled="item.torrentLoading" @click="searchProwlarrForItem(item, item.manualTorrentQuery)">Search term</button>
-                </div>
-              </template>
+              <div class="manual-query-row">
+                <input
+                  x-model="item.manualTorrentQuery"
+                  type="search"
+                  :placeholder="`Edit query (default: ${buildDefaultProwlarrQuery(item)})`"
+                  @keydown.enter.prevent="searchProwlarrForItem(item, item.manualTorrentQuery)">
+                <button type="button" :disabled="item.torrentLoading" @click="searchProwlarrForItem(item, item.manualTorrentQuery)">Search term</button>
+              </div>
               <div class="torrent-list">
                 <template x-for="result in item.torrentResults" :key="result.magnet_uri || result.title">
                   <div class="torrent">
@@ -916,10 +914,7 @@
           await this.searchProwlarrForItem(item);
         },
 
-        buildProwlarrQuery(item, customQuery) {
-          const manual = (customQuery || "").trim();
-          if (manual) return manual;
-
+        buildDefaultProwlarrQuery(item) {
           if (item.media_type === "tv") {
             const season = Math.max(1, Number(item.selectedSeason) || 1);
             return `${item.title} S${String(season).padStart(2, "0")}`;
@@ -928,14 +923,16 @@
           return item.year && item.media_type === "movie" ? `${item.title} ${item.year}` : item.title;
         },
 
-        async searchProwlarrForItem(item, customQuery = "") {
-          const q = this.buildProwlarrQuery(item, customQuery);
+        async searchProwlarrForItem(item, customQuery = null) {
+          const manual = typeof customQuery === "string" ? customQuery.trim() : "";
+          const q = manual || this.buildDefaultProwlarrQuery(item);
           item.torrentOpen = true;
           item.torrentLoading = true;
           item.torrentStatusError = false;
           item.torrentStatus = `Searching torrents for ${q}...`;
           item.torrentResults = [];
           item.lastTorrentQuery = q;
+          item.manualTorrentQuery = q;
 
           try {
             const response = await fetch(`/api/prowlarr/search?q=${encodeURIComponent(q)}`);
@@ -953,9 +950,6 @@
             item.torrentStatus = results.length
               ? `${results.length} torrent result${results.length === 1 ? "" : "s"}`
               : "No torrent results found.";
-            if (results.length) {
-              item.manualTorrentQuery = "";
-            }
           } catch (error) {
             item.torrentStatusError = true;
             item.torrentStatus = error.message || "Torrent search failed.";
