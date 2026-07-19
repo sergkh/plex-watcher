@@ -176,7 +176,7 @@ async fn add_torrent(
     let save_path = download_name.as_ref().map(|name| {
         state
             .cfg
-            .watch_dir
+            .download_dir
             .join(name)
             .to_string_lossy()
             .into_owned()

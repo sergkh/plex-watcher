@@ -20,6 +20,9 @@ Core paths:
   WATCH_DIR
       Folder to watch for incoming media.
       Default: /watch
+    DOWNLOAD_DIR
+            Base folder where qBittorrent writes downloads.
+            Default: /downloads
   PLEX_DIR
       Folder where Plex-ready hardlinks/copies are created.
       Default: /plex
@@ -79,6 +82,7 @@ Logging:
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub watch_dir: PathBuf,
+    pub download_dir: PathBuf,
     pub plex_dir: PathBuf,
     pub plex_url: String,
     pub plex_token: String,
@@ -117,6 +121,9 @@ impl AppConfig {
 
         Ok(Self {
             watch_dir: PathBuf::from(env::var("WATCH_DIR").unwrap_or_else(|_| "/watch".into())),
+            download_dir: PathBuf::from(
+                env::var("DOWNLOAD_DIR").unwrap_or_else(|_| "/downloads".into()),
+            ),
             plex_dir: PathBuf::from(env::var("PLEX_DIR").unwrap_or_else(|_| "/plex".into())),
             plex_url: env::var("PLEX_URL").unwrap_or_else(|_| "http://plex:32400".into()),
             plex_token: env::var("PLEX_TOKEN").unwrap_or_default(),
