@@ -157,9 +157,13 @@ impl QBittorrentClient {
         }
 
         info!(
-            "Downloading magnet link: {magnet_uri}{}",
+            "Downloading magnet link: {magnet_uri}{} to {}",
             download_name
                 .map(|name| format!(" as {name}"))
+                .unwrap_or_default(),
+            save_path
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
                 .unwrap_or_default()
         );
         self.list(None).await
