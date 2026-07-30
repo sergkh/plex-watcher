@@ -105,7 +105,37 @@
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 10px;
-      margin-bottom: 22px;
+      margin-bottom: 10px;
+    }
+    .recent-searches {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 12px;
+    }
+    .recent-searches-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .recent-search-link {
+      min-height: auto;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.25;
+      width: auto;
+    }
+    .recent-search-link:hover,
+    .recent-search-link:focus-visible {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
     }
     input {
       width: 100%;
@@ -601,6 +631,12 @@
         <input x-ref="query" x-model="query" name="q" type="search" placeholder="Search for a movie or TV show" autofocus>
         <button type="submit" :disabled="searchLoading">Search</button>
       </form>
+      <div class="recent-searches" x-show="recentSearches.length > 0">
+        <span class="recent-searches-label">Recent</span>
+        <template x-for="term in recentSearches" :key="term">
+          <button class="recent-search-link" type="button" :disabled="searchLoading" @click="searchRecent(term)" x-text="term"></button>
+        </template>
+      </div>
 
       <div class="status" :class="{ error: searchError }" x-text="searchStatus"></div>
       <section class="results" aria-live="polite">
@@ -746,9 +782,12 @@
 
   <script>
     function mediaApp() {
+      const RECENT_SEARCHES_KEY = "plexWatcherRecentSearches";
+
       return {
         page: "search",
         query: "",
+        recentSearches: [],
         searchLoading: false,
         searchError: false,
         searchStatus: "",
@@ -765,6 +804,10 @@
         logsStatus: "",
         logsStatusError: false,
         logsRefreshTimer: null,
+
+        init() {
+          this.loadRecentSearches();
+        },
 
         get pageTitle() {
           if (this.page === "downloads") return "Downloads";
@@ -802,6 +845,7 @@
             if (!response.ok) throw new Error(await response.text());
 
             const items = await response.json();
+            this.rememberSearch(q);
             this.results = items.map((item) => ({
               ...item,
               torrentOpen: false,
@@ -824,6 +868,41 @@
             this.searchStatus = error.message || "Search failed.";
           } finally {
             this.searchLoading = false;
+          }
+        },
+
+        searchRecent(term) {
+          this.query = term;
+          this.search();
+        },
+
+        rememberSearch(term) {
+          const trimmed = String(term || "").trim();
+          if (!trimmed) return;
+
+          const normalized = trimmed.toLowerCase();
+          const withoutCurrent = this.recentSearches.filter((item) => item.toLowerCase() !== normalized);
+          this.recentSearches = [trimmed, ...withoutCurrent].slice(0, 3);
+
+          try {
+            window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(this.recentSearches));
+          } catch {}
+        },
+
+        loadRecentSearches() {
+          try {
+            const raw = window.localStorage.getItem(RECENT_SEARCHES_KEY);
+            if (!raw) return;
+
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) return;
+
+            this.recentSearches = parsed
+              .map((item) => String(item || "").trim())
+              .filter((item) => item.length > 0)
+              .slice(0, 3);
+          } catch {
+            this.recentSearches = [];
           }
         },
 
