@@ -783,11 +783,14 @@
   <script>
     function mediaApp() {
       const RECENT_SEARCHES_KEY = "plexWatcherRecentSearches";
+      const TV_LAST_SEASON_KEY = "plexWatcherTvLastSeasonBySeriesV1";
+      const TV_LAST_SEASON_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
       return {
         page: "search",
         query: "",
         recentSearches: [],
+        tvSeasonMemory: {},
         searchLoading: false,
         searchError: false,
         searchStatus: "",
@@ -807,6 +810,7 @@
 
         init() {
           this.loadRecentSearches();
+          this.loadTvSeasonMemory();
         },
 
         get pageTitle() {
@@ -845,7 +849,7 @@
             if (!response.ok) throw new Error(await response.text());
 
             const items = await response.json();
-            this.rememberSearch(q);
+            if (items.length > 0) this.rememberSearch(q);
             this.results = items.map((item) => ({
               ...item,
               torrentOpen: false,
@@ -855,7 +859,7 @@
               torrentStatusError: false,
               torrentResults: [],
               seasonCount: item.season_count,
-              selectedSeason: 1,
+              selectedSeason: this.getRememberedTvSeason(item),
               manualTorrentQuery: "",
               lastTorrentQuery: "",
             }));
@@ -904,6 +908,102 @@
           } catch {
             this.recentSearches = [];
           }
+        },
+
+        buildTvSeriesMemoryKey(item) {
+          const tmdbId = Number(item?.tmdb_id);
+          if (Number.isFinite(tmdbId) && tmdbId > 0) return `tv:${Math.trunc(tmdbId)}`;
+
+          const normalizedTitle = String(item?.title || "").trim().toLowerCase();
+          const year = Number(item?.year);
+          return `tv:${normalizedTitle}:${Number.isFinite(year) ? Math.trunc(year) : ""}`;
+        },
+
+        sanitizeSeason(value) {
+          const season = Math.trunc(Number(value));
+          return Number.isFinite(season) && season > 0 ? season : 1;
+        },
+
+        maxSeasonForItem(item) {
+          const count = Math.trunc(Number(item?.seasonCount ?? item?.season_count));
+          return Number.isFinite(count) && count > 0 ? count : 40;
+        },
+
+        clampSeasonForItem(item, value) {
+          const min = 1;
+          const max = this.maxSeasonForItem(item);
+          return Math.min(Math.max(this.sanitizeSeason(value), min), max);
+        },
+
+        cleanupTvSeasonMemory(now = Date.now()) {
+          if (!this.tvSeasonMemory || typeof this.tvSeasonMemory !== "object") {
+            this.tvSeasonMemory = {};
+            return false;
+          }
+
+          let changed = false;
+          for (const [key, entry] of Object.entries(this.tvSeasonMemory)) {
+            const updatedAt = Number(entry?.updatedAt);
+            const season = Number(entry?.season);
+            const valid = Number.isFinite(updatedAt) && Number.isFinite(season) && season > 0;
+            const expired = !valid || now - updatedAt > TV_LAST_SEASON_TTL_MS;
+            if (expired) {
+              delete this.tvSeasonMemory[key];
+              changed = true;
+            }
+          }
+
+          return changed;
+        },
+
+        saveTvSeasonMemory() {
+          try {
+            window.localStorage.setItem(TV_LAST_SEASON_KEY, JSON.stringify(this.tvSeasonMemory));
+          } catch {}
+        },
+
+        loadTvSeasonMemory() {
+          try {
+            const raw = window.localStorage.getItem(TV_LAST_SEASON_KEY);
+            if (!raw) {
+              this.tvSeasonMemory = {};
+              return;
+            }
+
+            const parsed = JSON.parse(raw);
+            this.tvSeasonMemory = parsed && typeof parsed === "object" ? parsed : {};
+            if (this.cleanupTvSeasonMemory()) this.saveTvSeasonMemory();
+          } catch {
+            this.tvSeasonMemory = {};
+          }
+        },
+
+        getRememberedTvSeason(item) {
+          if (item?.media_type !== "tv") return 1;
+
+          const key = this.buildTvSeriesMemoryKey(item);
+          const entry = this.tvSeasonMemory?.[key];
+          if (!entry) return 1;
+
+          const now = Date.now();
+          if (now - Number(entry.updatedAt) > TV_LAST_SEASON_TTL_MS) {
+            delete this.tvSeasonMemory[key];
+            this.saveTvSeasonMemory();
+            return 1;
+          }
+
+          return this.clampSeasonForItem(item, entry.season);
+        },
+
+        rememberTvSeason(item, season) {
+          if (item?.media_type !== "tv") return;
+
+          const key = this.buildTvSeriesMemoryKey(item);
+          this.tvSeasonMemory[key] = {
+            season: this.clampSeasonForItem(item, season),
+            updatedAt: Date.now(),
+          };
+          this.saveTvSeasonMemory();
         },
 
         showSearchPage() {
@@ -976,6 +1076,7 @@
 
         async onSeasonChange(item) {
           if (item.media_type !== "tv" || item.torrentLoading) return;
+          this.rememberTvSeason(item, item.selectedSeason);
           await this.searchProwlarrForItem(item);
         },
 
@@ -1003,6 +1104,11 @@
         },
 
         async searchProwlarrForItem(item, customQuery = null) {
+          if (item.media_type === "tv") {
+            item.selectedSeason = this.clampSeasonForItem(item, item.selectedSeason);
+            this.rememberTvSeason(item, item.selectedSeason);
+          }
+
           const manual = typeof customQuery === "string" ? customQuery.trim() : "";
           const q = manual || this.buildDefaultProwlarrQuery(item);
           item.torrentOpen = true;
